@@ -241,7 +241,10 @@ assert(#rows >= 4, "headers and recipes listed")
 assert(rows[1].header and rows[1].label == "Blacksmithing", "All groups by profession, alphabetical")
 local tabsShown = 0
 for _, tab in ipairs(win.tabs) do if tab.shown then tabsShown = tabsShown + 1 end end
-assert(tabsShown == 3, "tabs: All, Blacksmithing, Cooking (got " .. tabsShown .. ")")
+assert(tabsShown == 10, "tabs: All plus the 9 crafting professions (got " .. tabsShown .. ")")
+for _, tab in ipairs(win.tabs) do if tab.title == "Alchemy" then tab.scripts.OnClick(tab) end end
+assert(win.empty.text:find("Nobody in your guild has shared Alchemy yet"), "empty profession tab explains itself")
+assert(win.headTitle.text == "Alchemy" and win.barText.text == "0 of 0 crafters online", "header for an empty profession")
 
 -- Cooking tab: Dan's Spotted Yellowtail under its category.
 for _, tab in ipairs(win.tabs) do if tab.title == "Cooking" then tab.scripts.OnClick(tab) end end

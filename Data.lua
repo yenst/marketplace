@@ -95,6 +95,41 @@ function Data.Index(crafters)
     return recipes, professions
 end
 
+-- Professions without recipes: nothing to ask a crafter for.
+Data.GATHERING = { [182] = true, [393] = true, [356] = true } -- Herbalism, Skinning, Fishing
+
+-- Fallback when the client can't list its professions.
+Data.KNOWN_PROFESSIONS = {
+    { id = 171, name = "Alchemy" }, { id = 164, name = "Blacksmithing" }, { id = 333, name = "Enchanting" },
+    { id = 202, name = "Engineering" }, { id = 165, name = "Leatherworking" }, { id = 197, name = "Tailoring" },
+    { id = 186, name = "Mining" }, { id = 185, name = "Cooking" }, { id = 129, name = "First Aid" },
+}
+
+-- Every crafting profession for the side tabs, whether anyone shares it or
+-- not, sorted by name: { id, name, crafters = { [key] = crafter } }.
+--   gameList = { { id, name }, ... } from the client (or KNOWN_PROFESSIONS)
+function Data.Tabs(gameList, professions)
+    local byId, list = {}, {}
+    local function add(id, name)
+        if Data.GATHERING[id] or byId[id] then
+            return
+        end
+        local entry = { id = id, name = name, crafters = professions[id] and professions[id].crafters or {} }
+        byId[id] = entry
+        list[#list + 1] = entry
+    end
+    for _, g in ipairs(gameList or {}) do
+        if g.id and g.name and g.name ~= "" then
+            add(g.id, g.name)
+        end
+    end
+    for id, p in pairs(professions) do
+        add(id, p.name)
+    end
+    table.sort(list, function(a, b) return a.name < b.name end)
+    return list, byId
+end
+
 -- Professions sorted by name, for the side tabs.
 function Data.ProfessionList(professions)
     local list = {}

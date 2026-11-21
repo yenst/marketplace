@@ -265,6 +265,17 @@ test("Data.List groups by category, filters and collapses", function()
     eq(count, 0, "only an offline alt has Chili")
 end)
 
+test("Data.Tabs lists every crafting profession, shared or not", function()
+    local _, profs = ns.Data.Index(ns.Data.Crafters(ctx()))
+    local game = { { id = 171, name = "Alchemy" }, { id = 164, name = "Blacksmithing" }, { id = 182, name = "Herbalism" }, { id = 186, name = "Mining" } }
+    local list, byId = ns.Data.Tabs(game, profs)
+    local names = {}
+    for _, p in ipairs(list) do names[#names + 1] = p.name end
+    eq(table.concat(names, ","), "Alchemy,Blacksmithing,Cooking,Mining", "sorted, gathering left out, shared Cooking added")
+    eq(next(byId[171].crafters), nil, "nobody has Alchemy")
+    assert(byId[164].crafters["Dan Pal"], "Blacksmithing keeps its crafters")
+end)
+
 test("Data.StatusText", function()
     eq(ns.Data.StatusText({ state = "you" }), "You")
     eq(ns.Data.StatusText({ state = "addon" }), "Online")

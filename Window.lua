@@ -22,7 +22,7 @@ local TAB_SIZE, MAX_TABS = 36, 12
 
 local frame
 local state = { prof = "all", query = "", onlineOnly = false, collapsed = {}, selected = nil, offset = 0, crafterOffset = 0 }
-local model = { recipes = {}, professions = {}, crafters = {}, items = {}, rosterSize = 0 }
+local model = { recipes = {}, professions = {}, tabs = {}, crafters = {}, items = {}, rosterSize = 0 }
 
 -- Game data helpers ---------------------------------------------------------
 
@@ -62,6 +62,25 @@ end
 local function professionTexture(id)
     local T = C_TradeSkillUI
     return T and T.GetTradeSkillTexture and T.GetTradeSkillTexture(id)
+end
+
+-- Every profession the client knows, as { id, name }; the built-in list if
+-- it can't tell us.
+local function gameProfessions()
+    local T = C_TradeSkillUI
+    if not (T and T.GetAllProfessionTradeSkillLines) then
+        return Data.KNOWN_PROFESSIONS
+    end
+    local list = {}
+    for _, id in ipairs(T.GetAllProfessionTradeSkillLines() or {}) do
+        local info = T.GetProfessionInfoBySkillLineID and T.GetProfessionInfoBySkillLineID(id)
+        local name = info and info.professionName
+        if (not name or name == "") and T.GetTradeSkillDisplayName then
+            name = T.GetTradeSkillDisplayName(id)
+        end
+        list[#list + 1] = { id = id, name = name }
+    end
+    return #list > 0 and list or Data.KNOWN_PROFESSIONS
 end
 
 local function classColor(class)
@@ -422,20 +441,29 @@ end
 
 -- Drawing ---------------------------------------------------------------------
 
+local function crafterHint(crafters)
+    local n = 0
+    for _ in pairs(crafters) do
+        n = n + 1
+    end
+    return n > 0 and ns.Plural(n, "crafter") or "Nobody in your guild has shared this yet"
+end
+
 local function drawTabs()
-    local list = Data.ProfessionList(model.professions)
+    local list, byId = Data.Tabs(gameProfessions(), model.professions)
+    model.tabs = byId
     local entries = { { prof = "all", label = "All professions", texture = ns.ICON } }
     for _, p in ipairs(list) do
-        entries[#entries + 1] = { prof = p.id, label = p.name, texture = professionTexture(p.id) }
+        entries[#entries + 1] = { prof = p.id, label = p.name, texture = professionTexture(p.id), hint = crafterHint(p.crafters) }
     end
-    if state.prof ~= "all" and not model.professions[state.prof] then
+    if state.prof ~= "all" and not byId[state.prof] then
         state.prof = "all"
     end
     for i, tab in ipairs(frame.tabs) do
         local e = entries[i]
         tab:SetShown(e ~= nil)
         if e then
-            tab.prof, tab.title = e.prof, e.label
+            tab.prof, tab.title, tab.hint = e.prof, e.label, e.hint
             tab:SetIcon(e.texture, e.label:sub(1, 2))
             tab:SetSelected(state.prof == e.prof)
         end
@@ -454,7 +482,7 @@ local function drawHeader()
         frame.headTitle:SetText("All professions")
         frame.headIcon:SetTexture(ns.ICON)
     else
-        local p = model.professions[state.prof]
+        local p = model.tabs[state.prof]
         for _, c in pairs(p.crafters) do
             crafters[#crafters + 1] = c
         end
@@ -504,6 +532,9 @@ function Window.DrawList()
     local count = model.count or 0
     if next(model.recipes) == nil then
         frame.empty:SetText("Nothing here yet. Open your profession windows once to scan them; guildmates who run Marketplace show up as they log in.")
+    elseif count == 0 and state.prof ~= "all" and (state.query or "") == "" and not state.onlineOnly then
+        local p = model.tabs and model.tabs[state.prof]
+        frame.empty:SetText("Nobody in your guild has shared " .. (p and p.name or "this profession") .. " yet.")
     elseif count == 0 then
         frame.empty:SetText("No recipe matches.")
     else
