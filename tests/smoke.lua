@@ -157,7 +157,17 @@ local function sentTo(target, pattern)
 end
 
 ns.Sync.Announce(true)
-assert(out[#out].channel == "GUILD" and out[#out].text:find("^H:1:%x+$"), "login hello goes to the guild")
+assert(out[#out].channel == "GUILD" and out[#out].text:find("^H:1:%x+:%x+$"), "login hello goes to the guild")
+-- Forever: messages come from "Tester Joel" though UnitName says "Tester".
+-- Our own hello echoes back from the guild and teaches us that name.
+MarketplaceDB.guilds["Test Guild"] = { ["Tester Joel"] = { hash = "x", professions = {} } }
+addon(out[#out].text, "GUILD", "Tester Joel")
+assert(ns.Sync.selfName == "Tester Joel", "own name learned from the echo")
+assert(MarketplaceDB.guilds["Test Guild"]["Tester Joel"] == nil, "a stored copy of ourselves is dropped")
+out = {}
+addon("H:1:abcd1234", "WHISPER", "Tester Joel")
+addon("R:1", "WHISPER", "Tester Joel")
+assert(#out == 0, "messages from our own name are ignored")
 
 local dan = { [185] = { id = 185, name = "Cooking", skill = 150, maxSkill = 150, scannedAt = 1, recipes = { [18238] = 2489 }, categories = { [2489] = { name = "Fish", parent = 0 } } } }
 local danLines, danHash = ns.Sync.Encode(dan)
@@ -192,7 +202,7 @@ assert(chat[#chat]:find("hello from Dan%-Mirage over WHISPER %(up to date%)"), "
 SlashCmdList.MARKETPLACE("debug")
 
 out = {}
-addon("H:1:" .. danHash, "GUILD", "Tester-Mirage")
+addon("H:1:" .. danHash .. ":" .. ns.Sync.code, "GUILD", "Tester Joel")
 assert(#out == 0, "our own guild echo is ignored")
 
 print("smoke test passed")

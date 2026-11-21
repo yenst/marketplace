@@ -189,12 +189,34 @@ function Sync.MyHash()
     return Sync.Hash(myShare())
 end
 
+-- Forever reports "Billy" from UnitName but messages arrive from "Billy Joel",
+-- so names can't tell us apart from others. Our guild hellos carry a random
+-- per-session code instead; the echo that comes back with it is us, and its
+-- sender is the name everyone else sees.
+Sync.code = string.format("%06x", math.random(0, 16777215))
+Sync.selfName = nil
+
 local function isMe(sender)
+    if Sync.selfName then
+        return sender == Sync.selfName
+    end
     local name, realm = UnitName("player"), GetNormalizedRealmName and GetNormalizedRealmName()
     if realm and realm ~= "" then
         return sender == name .. "-" .. realm or sender == name
     end
     return (sender:match("^[^-]+")) == name
+end
+
+-- Our own guild hello came back: remember the name it came from.
+local function learnSelf(sender)
+    Sync.selfName = sender
+    if ns.char then
+        ns.char.fullName = sender
+    end
+    local data = Sync.GuildData()
+    if data then
+        data[sender] = nil -- an earlier version could store us as a guildmate
+    end
 end
 
 -- Saved guild data: db.guilds[guild][sender] = { professions, hash, updated }.
@@ -217,7 +239,7 @@ function Sync.Announce(force)
     if force or hash ~= lastAnnounced then
         lastAnnounced = hash
         debug("hello to guild (" .. hash .. ")")
-        send("H:" .. Sync.VERSION .. ":" .. hash, "GUILD")
+        send("H:" .. Sync.VERSION .. ":" .. hash .. ":" .. Sync.code, "GUILD")
     end
 end
 
@@ -225,7 +247,7 @@ local decoders = {}
 local handlers = {}
 
 function handlers.H(sender, rest, channel)
-    local version, hash = rest:match("^(%d+):(%x+)$")
+    local version, hash = rest:match("^(%d+):(%x+)")
     if version ~= Sync.VERSION then
         return
     end
@@ -264,7 +286,15 @@ local function feed(sender, line)
 end
 
 function Sync.OnMessage(prefix, text, channel, sender)
-    if prefix ~= Sync.PREFIX or not sender or isMe(sender) then
+    if prefix ~= Sync.PREFIX or not sender then
+        return
+    end
+    local code = text:match("^H:%d+:%x+:(%x+)$")
+    if code and code == Sync.code then
+        learnSelf(sender)
+        return
+    end
+    if isMe(sender) then
         return
     end
     Sync.seen[sender] = time()
