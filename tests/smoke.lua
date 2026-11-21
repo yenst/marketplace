@@ -77,8 +77,18 @@ end
 local function fire(event, ...) eventFrame.scripts.OnEvent(eventFrame, event, ...) end
 
 UnitClass = function() return "Warrior", "WARRIOR", 1 end
+-- A character saved under a blank realm (Forever sometimes reports "" at
+-- login) moves to the real realm once it's known.
+MarketplaceDB = { chars = { ["Tester-"] = { name = "Tester", realm = "", professions = { [185] = { id = 185, name = "Cooking", skill = 13, maxSkill = 75, scannedAt = 5, recipes = {} } } } } }
+local realRealm = GetRealmName
+GetRealmName = function() return "" end
 fire("ADDON_LOADED", "Marketplace")
 fire("PLAYER_LOGIN")
+assert(MarketplaceDB.chars["Tester-"], "blank realm: stays under Tester- for now")
+GetRealmName = realRealm
+fire("PLAYER_ENTERING_WORLD")
+assert(not MarketplaceDB.chars["Tester-"], "stray entry removed once the realm is known")
+assert(MarketplaceDB.chars["Tester-Mirage"].professions[185], "its scans moved to Tester-Mirage")
 assert(MarketplaceDB and MarketplaceDB.chars and MarketplaceDB.guilds, "saved data initialised")
 
 UnitClass = function() return "Warrior", "WARRIOR", 1 end

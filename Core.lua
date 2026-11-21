@@ -51,11 +51,44 @@ local function loadCharacter()
     ns.char = c
 end
 
+-- Once the realm is known, moves a character saved as "Name-" (blank realm
+-- at login) to "Name-Realm". Scans in either entry are kept, newest first.
+local function fixRealm()
+    local c = ns.char
+    if not c or (c.realm and c.realm ~= "") then
+        return
+    end
+    local realm = GetRealmName()
+    if not realm or realm == "" then
+        return
+    end
+    local strayKey, key = c.name .. "-", c.name .. "-" .. realm
+    local target = ns.db.chars[key]
+    if target then
+        target.professions = target.professions or {}
+        for id, p in pairs(c.professions or {}) do
+            local old = target.professions[id]
+            if not old or (old.scannedAt or 0) <= (p.scannedAt or 0) then
+                target.professions[id] = p
+            end
+        end
+        target.class, target.lastSeen = c.class, c.lastSeen
+    else
+        target = c
+        ns.db.chars[key] = c
+    end
+    target.realm = realm
+    if ns.db.chars[strayKey] == c then
+        ns.db.chars[strayKey] = nil
+    end
+    ns.char = target
+end
+
 -- "Blacksmithing 215/300 (84 recipes), Cooking 120/150 (31 recipes)"
 local function professionSummary(c)
     local parts = {}
     for _, p in pairs(c.professions or {}) do
-        parts[#parts + 1] = string.format("%s %d/%d (%s)", p.name, p.skill, p.maxSkill, ns.Plural(ns.Scanner.Count(p), "recipe"))
+        parts[#parts + 1] = string.format("%s %d/%d (%s)", p.name or "?", p.skill or 0, p.maxSkill or 0, ns.Plural(ns.Scanner.Count(p), "recipe"))
     end
     table.sort(parts)
     return #parts > 0 and table.concat(parts, ", ") or "none yet; open a profession window to scan it"
@@ -75,7 +108,13 @@ end
 
 function handlers.PLAYER_LOGIN()
     loadCharacter()
+    fixRealm()
     ns.Theme.Load()
+    C_Timer.After(5, fixRealm)
+end
+
+function handlers.PLAYER_ENTERING_WORLD()
+    fixRealm()
 end
 
 handlers.TRADE_SKILL_SHOW = function() ns.Scanner.Queue() end
