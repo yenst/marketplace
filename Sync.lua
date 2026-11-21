@@ -178,7 +178,7 @@ local function pump()
     C_Timer.After(0.25, pump)
 end
 
--- Queues an addon message (Public uses this too, with its own prefix).
+-- Queues an addon message.
 function Sync.Send(text, channel, target, prefix)
     queue[#queue + 1] = { prefix = prefix or Sync.PREFIX, text = text, channel = channel, target = target }
     if not pumping then
