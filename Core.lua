@@ -140,6 +140,8 @@ end)
 local HELP = {
     "/marketplace (or /mkt) - open the browser",
     "/mkt status - what Marketplace knows about this character's professions",
+    "/mkt guild - guildmates' professions received so far",
+    "/mkt debug - show / hide guild sync activity in chat",
     "/mkt probe - check which profession and messaging APIs this client has",
     "/mkt probe trade - with a profession window open, save its recipe data for development",
 }
@@ -147,6 +149,15 @@ local HELP = {
 local COMMANDS = {
     [""] = function() ns.Window.Toggle() end,
     status = function() ns.Print("Professions: " .. professionSummary(ns.char)) end,
+    guild = function()
+        for _, line in ipairs(ns.Sync.Report()) do
+            ns.Print(line)
+        end
+    end,
+    debug = function()
+        ns.db.settings.debug = not ns.db.settings.debug
+        ns.Print("Sync debug output " .. (ns.db.settings.debug and "on" or "off") .. ".")
+    end,
     probe = function(args)
         if args == "trade" then
             ns.Probe.Trade()

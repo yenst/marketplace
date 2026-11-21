@@ -183,6 +183,14 @@ for _, m in ipairs(out) do
 end
 assert(got and got[164], "Dan gets our Blacksmithing")
 
+SlashCmdList.MARKETPLACE("guild")
+assert(chat[#chat]:find("Dan%-Mirage: Cooking 150 %(1%) · addon running"), "/mkt guild lists Dan")
+SlashCmdList.MARKETPLACE("debug")
+assert(MarketplaceDB.settings.debug, "debug on")
+addon("H:1:" .. danHash, "WHISPER", "Dan-Mirage")
+assert(chat[#chat]:find("hello from Dan%-Mirage over WHISPER %(up to date%)"), "debug shows sync activity")
+SlashCmdList.MARKETPLACE("debug")
+
 out = {}
 addon("H:1:" .. danHash, "GUILD", "Tester-Mirage")
 assert(#out == 0, "our own guild echo is ignored")

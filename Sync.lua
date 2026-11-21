@@ -149,6 +149,12 @@ end
 -- Who has talked to us this session (= is running Marketplace), by full name.
 Sync.seen = {}
 
+local function debug(msg)
+    if ns.db and ns.db.settings.debug then
+        ns.Print("|cff8c949fsync:|r " .. msg)
+    end
+end
+
 local queue, pumping = {}, false
 
 -- Sends queued lines a few per second; a throttled send is retried.
@@ -210,6 +216,7 @@ function Sync.Announce(force)
     local hash = Sync.MyHash()
     if force or hash ~= lastAnnounced then
         lastAnnounced = hash
+        debug("hello to guild (" .. hash .. ")")
         send("H:" .. Sync.VERSION .. ":" .. hash, "GUILD")
     end
 end
@@ -224,6 +231,7 @@ function handlers.H(sender, rest, channel)
     end
     local data = Sync.GuildData()
     local known = data and data[sender]
+    debug(string.format("hello from %s over %s (%s)", sender, channel, known and known.hash == hash and "up to date" or "new"))
     if data and (not known or known.hash ~= hash) and hash ~= Sync.Hash({}) then
         C_Timer.After(math.random(1, 4), function() send("R:" .. Sync.VERSION, "WHISPER", sender) end)
     end
@@ -237,7 +245,9 @@ function handlers.R(sender, rest)
     if rest ~= Sync.VERSION then
         return
     end
-    for _, line in ipairs((Sync.Encode(myShare()))) do
+    local lines = Sync.Encode(myShare())
+    debug(string.format("%s asked for our recipes: sending %d lines", sender, #lines))
+    for _, line in ipairs(lines) do
         send(line, "WHISPER", sender)
     end
 end
@@ -248,6 +258,7 @@ local function feed(sender, line)
     local data = professions and Sync.GuildData()
     if data then
         data[sender] = { professions = professions, hash = hash, updated = time() }
+        debug("received " .. sender .. "'s recipes")
         ns.Refresh()
     end
 end
@@ -263,6 +274,34 @@ function Sync.OnMessage(prefix, text, channel, sender)
     elseif kind and channel == "WHISPER" then
         feed(sender, text)
     end
+end
+
+-- Chat lines for /mkt guild: one per guildmate we have data for.
+function Sync.Report()
+    local data = Sync.GuildData()
+    if not data then
+        return { "Not in a guild." }
+    end
+    local lines, names = {}, {}
+    for name in pairs(data) do
+        names[#names + 1] = name
+    end
+    table.sort(names)
+    for _, name in ipairs(names) do
+        local entry, parts = data[name], {}
+        for _, p in pairs(entry.professions or {}) do
+            local n = 0
+            for _ in pairs(p.recipes or {}) do n = n + 1 end
+            parts[#parts + 1] = string.format("%s %d (%d)", p.name or "?", p.skill or 0, n)
+        end
+        table.sort(parts)
+        local state = Sync.seen[name] and "|cff4dcc73addon running|r" or "|cff8c949fnot seen this session|r"
+        lines[#lines + 1] = string.format("%s: %s · %s", name, #parts > 0 and table.concat(parts, ", ") or "no professions", state)
+    end
+    if #lines == 0 then
+        lines[1] = "No guildmate data yet. Guildmates need Marketplace and to be online."
+    end
+    return lines
 end
 
 function Sync.Init()
