@@ -15,4 +15,5 @@ Init.lua
 Theme.lua
 Widgets.lua
 Window.lua
+Probe.lua
 Core.lua

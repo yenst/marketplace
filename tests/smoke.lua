@@ -87,4 +87,16 @@ assert(not _G.MarketplaceWindow.shown, "slash command toggles the window closed"
 SlashCmdList.MARKETPLACE("help")
 assert(#chat > 0, "unknown command prints help")
 
+GetBuildInfo = function() return "1.60.1", "69893", "Nov 2026", 16001 end
+IsInGuild = function() return true end
+local sent = {}
+C_ChatInfo = {
+    RegisterAddonMessagePrefix = function() return true end,
+    SendAddonMessage = function(_, msg, kind) sent[#sent + 1] = kind; return 0 end,
+}
+JoinTemporaryChannel, LeaveChannelByName = function() end, function() end
+GetChannelName = function() return 5 end
+SlashCmdList.MARKETPLACE("probe")
+assert(sent[1] == "GUILD" and sent[2] == "CHANNEL", "probe sends over guild and channel")
+
 print("smoke test passed")

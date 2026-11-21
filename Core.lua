@@ -48,10 +48,12 @@ end)
 
 local HELP = {
     "/marketplace (or /mkt) - open the browser",
+    "/mkt probe - check which profession and messaging APIs this client has",
 }
 
 local COMMANDS = {
     [""] = function() ns.Window.Toggle() end,
+    probe = function() ns.Probe.Run() end,
 }
 
 SLASH_MARKETPLACE1, SLASH_MARKETPLACE2 = "/marketplace", "/mkt"
