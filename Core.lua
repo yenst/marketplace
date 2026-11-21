@@ -124,6 +124,27 @@ function handlers.PLAYER_ENTERING_WORLD()
     fixRealm()
 end
 
+-- Which guild this character is in, so its alts' recipes show in that guild.
+local function noteGuild()
+    if ns.char then
+        ns.char.guild = IsInGuild() and GetGuildInfo("player") or nil
+    end
+end
+
+function handlers.PLAYER_GUILD_UPDATE()
+    noteGuild()
+    ns.Refresh()
+end
+
+function handlers.GUILD_ROSTER_UPDATE()
+    noteGuild()
+    ns.Window.Refresh()
+end
+
+function handlers.GET_ITEM_INFO_RECEIVED()
+    ns.Window.ItemDataArrived()
+end
+
 handlers.TRADE_SKILL_SHOW = function() ns.Scanner.Queue() end
 handlers.TRADE_SKILL_LIST_UPDATE = handlers.TRADE_SKILL_SHOW
 handlers.TRADE_SKILL_DATA_SOURCE_CHANGED = handlers.TRADE_SKILL_SHOW

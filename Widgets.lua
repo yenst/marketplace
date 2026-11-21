@@ -63,6 +63,7 @@ end
 
 function W.Button(parent, label, width, height, onClick)
     local button = CreateFrame("Button", nil, parent, "BackdropTemplate")
+    button.disabled, button.selected, button.hover = false, false, false
     button:SetSize(width, height or 22)
     W.Skin(button, Theme.bgRaised)
     button.text = W.Text(button, 12, Theme.text, "CENTER")
@@ -100,6 +101,7 @@ end
 -- one stands out. tooltip = function(button) -> title, description.
 function W.IconButton(parent, size, texture, fallback, tooltip, onClick)
     local button = CreateFrame("Button", nil, parent, "BackdropTemplate")
+    button.disabled, button.selected, button.hover = false, false, false
     button:SetSize(size, size)
     W.Skin(button, Theme.bgRaised)
     button.icon = button:CreateTexture(nil, "ARTWORK")
@@ -265,4 +267,32 @@ function W.Window(globalName, width, height, title)
     local close = W.Button(bar, "x", 20, 20, function() frame:Hide() end)
     close:SetPoint("RIGHT", -6, 0)
     return frame
+end
+
+-- One-line text box with a grey placeholder; onChange(text) on every edit.
+-- Escape or Enter drops focus.
+function W.SearchBox(parent, width, placeholder, onChange)
+    local box = CreateFrame("EditBox", nil, parent, "BackdropTemplate")
+    box:SetSize(width, 24)
+    W.Skin(box, { 0.02, 0.03, 0.04, 1 })
+    box:SetAutoFocus(false)
+    box:SetTextInsets(8, 8, 0, 0)
+    box:SetFont(Theme.font, 12, "")
+    if not box:GetFont() then
+        box:SetFont(STANDARD_TEXT_FONT, 12, "")
+    end
+    box:SetTextColor(unpack(Theme.text))
+    local hint = W.Text(box, 12, Theme.muted)
+    hint:SetPoint("LEFT", 8, 0)
+    hint:SetText(placeholder)
+    box:SetScript("OnTextChanged", function(self)
+        local text = self:GetText() or ""
+        hint:SetShown(text == "")
+        onChange(text)
+    end)
+    box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    box:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    box:SetScript("OnEditFocusGained", function(self) self:SetBackdropBorderColor(unpack(Theme.accent)) end)
+    box:SetScript("OnEditFocusLost", function(self) self:SetBackdropBorderColor(unpack(Theme.border)) end)
+    return box
 end

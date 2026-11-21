@@ -205,4 +205,67 @@ out = {}
 addon("H:1:" .. danHash .. ":" .. ns.Sync.code, "GUILD", "Tester Joel")
 assert(#out == 0, "our own guild echo is ignored")
 
+-- The browser window with us and Dan in the guild.
+GetNumGuildMembers = function() return 2 end
+GetGuildRosterInfo = function(i)
+    if i == 1 then return "Dan-Mirage", "", 0, 60, "Paladin", "", "", "", true, 0, "PALADIN" end
+    return "Tester Joel-Mirage", "", 0, 60, "Warrior", "", "", "", true, 0, "WARRIOR"
+end
+C_GuildInfo = { GuildRoster = function() end }
+RAID_CLASS_COLORS = { PALADIN = { r = 0.96, g = 0.55, b = 0.73 }, WARRIOR = { r = 0.78, g = 0.61, b = 0.43 } }
+C_Item = {
+    GetItemNameByID = function(id) return "Item " .. id end,
+    GetItemIconByID = function() return 134400 end,
+    GetItemQualityByID = function() return 3 end,
+    GetItemCount = function() return 1 end,
+}
+C_TradeSkillUI.GetRecipeLink = function(id) return "|cffffd000|Henchant:" .. id .. "|h[Recipe]|h|r" end
+C_TradeSkillUI.GetTradeSkillTexture = function() return 136241 end
+local told, inserted
+ChatFrame_SendTell = function(name) told = name end
+ChatEdit_GetActiveWindow = function() return { Insert = function(_, text) inserted = text end } end
+MarketplaceDB.recipes[18238] = { name = "Spotted Yellowtail", item = 13927, reagents = { { 13754, 1 } } }
+
+local win = _G.MarketplaceWindow
+SlashCmdList.MARKETPLACE("")
+assert(win.shown, "window opens")
+local function visibleRows()
+    local list = {}
+    for _, row in ipairs(win.rows) do
+        if row.shown and row.item then list[#list + 1] = row.item end
+    end
+    return list
+end
+local rows = visibleRows()
+assert(#rows >= 4, "headers and recipes listed")
+assert(rows[1].header and rows[1].label == "Blacksmithing", "All groups by profession, alphabetical")
+local tabsShown = 0
+for _, tab in ipairs(win.tabs) do if tab.shown then tabsShown = tabsShown + 1 end end
+assert(tabsShown == 3, "tabs: All, Blacksmithing, Cooking (got " .. tabsShown .. ")")
+
+-- Cooking tab: Dan's Spotted Yellowtail under its category.
+for _, tab in ipairs(win.tabs) do if tab.title == "Cooking" then tab.scripts.OnClick(tab) end end
+rows = visibleRows()
+assert(rows[1].header and rows[1].label == "Fish", "Cooking groups by category")
+assert(rows[2].name == "Spotted Yellowtail", "Dan's recipe listed")
+assert(win.selName.text:find("Spotted Yellowtail"), "first recipe selected and shown")
+assert(win.reagents[1].shown and win.reagents[1].count.text == "1/1", "reagent with have/need")
+assert(win.crafters[1].name.text == "Dan", "Dan listed as crafter")
+win.crafters[1].whisper.scripts.OnClick(win.crafters[1].whisper)
+assert(told == "Dan" and inserted:find("Henchant:18238"), "whisper opens a tell with the recipe link")
+
+-- Collapse the header, then search across everything.
+win.rows[1].scripts.OnClick(win.rows[1])
+rows = visibleRows()
+assert(#rows == 1 and rows[1].collapsed, "header collapses")
+win.rows[1].scripts.OnClick(win.rows[1])
+for _, tab in ipairs(win.tabs) do if tab.title == "All professions" then tab.scripts.OnClick(tab) end end
+win.search:SetText("yellowtail")
+win.search.scripts.OnTextChanged(win.search)
+rows = visibleRows()
+assert(#rows == 2 and rows[2].name == "Spotted Yellowtail", "search narrows the list")
+win.search:SetText("")
+win.search.scripts.OnTextChanged(win.search)
+assert(win.footer.text:find("Data from 1 of 2 guild members"), "footer coverage: " .. tostring(win.footer.text))
+
 print("smoke test passed")

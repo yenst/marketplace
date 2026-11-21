@@ -3,7 +3,7 @@
 date, time = os.date, os.time
 
 local ns = {}
-for _, file in ipairs({ "Init", "Scanner", "Sync" }) do
+for _, file in ipairs({ "Init", "Scanner", "Sync", "Data" }) do
     assert(loadfile(file .. ".lua"))("Marketplace", ns)
 end
 
@@ -181,6 +181,96 @@ test("Sync.Shareable leaves out professions without recipes", function()
     local s = ns.Sync.Shareable({ [356] = { recipes = {} }, [185] = { recipes = { [1] = 0 } } })
     eq(s[356], nil, "fishing")
     assert(s[185], "cooking")
+end)
+
+-- Data: a guild with me (Billy), my offline alt, Dan (addon running),
+-- Fenna (online, no addon this session) and Kael (offline).
+local function bs(recipes) return { name = "Blacksmithing", recipes = recipes, categories = { [10] = { name = "Weapons" }, [11] = { name = "Armor" } } } end
+local function ctx()
+    return {
+        own = {
+            { name = "Billy Joel", class = "PALADIN", current = true, professions = { [164] = bs({ [1] = 10, [2] = 11 }) } },
+            { name = "Billy Alt", class = "MAGE", professions = { [185] = { name = "Cooking", recipes = { [7] = 0 } } } },
+        },
+        guildData = {
+            ["Dan Pal"] = { updated = 100, professions = { [164] = bs({ [1] = 10 }) } },
+            ["Fenna Frost-Mirage"] = { updated = 100, professions = { [164] = bs({ [3] = 11 }) } },
+            ["Kael Sun"] = { updated = 100, professions = { [164] = bs({ [1] = 10, [3] = 11 }) } },
+            ["Billy Joel"] = { updated = 1, professions = { [164] = bs({ [9] = 10 }) } },
+        },
+        roster = {
+            ["Dan Pal"] = { online = true, class = "PALADIN" },
+            ["Fenna Frost"] = { online = true, class = "MAGE" },
+            ["Kael Sun"] = { online = false, class = "WARRIOR", lastOnline = 2 * 86400 },
+        },
+        seen = { ["Dan Pal"] = 5 },
+    }
+end
+local META = { [1] = { name = "Arcanite Reaper", reagents = { { 500, 12 } } }, [2] = { name = "Lionheart Helm" }, [3] = { name = "Imperial Plate" }, [7] = { name = "Chili" } }
+local function metaOf(id) return META[id] end
+local function itemName(id) return id == 500 and "Arcanite Bar" or nil end
+
+test("Data.Crafters merges own characters, synced guildmates and roster state", function()
+    local list = ns.Data.Crafters(ctx())
+    local by = {}
+    for _, c in ipairs(list) do by[c.name] = c end
+    eq(by["Billy Joel"].state, "you")
+    eq(by["Billy Joel"].professions[164].recipes[9], nil, "own scan wins over a stale synced copy of ourselves")
+    eq(by["Billy Alt"].state, "offline", "own alt not in the roster as online")
+    eq(by["Dan Pal"].state, "addon")
+    eq(by["Fenna Frost"].state, "noaddon", "realm suffix stripped, online in roster")
+    eq(by["Fenna Frost"].class, "MAGE")
+    eq(by["Kael Sun"].state, "offline")
+end)
+
+test("Data.Index lists crafters per recipe, online first", function()
+    local recipes, profs = ns.Data.Index(ns.Data.Crafters(ctx()))
+    local reaper = recipes[1]
+    eq(#reaper.crafters, 3)
+    eq(reaper.crafters[1].name, "Billy Joel", "you first")
+    eq(reaper.crafters[2].name, "Dan Pal", "then addon running")
+    eq(reaper.crafters[3].name, "Kael Sun", "then offline")
+    eq(reaper.catName, "Weapons")
+    eq(recipes[7].catName, "Other", "category 0")
+    local list = ns.Data.ProfessionList(profs)
+    eq(list[1].name, "Blacksmithing")
+    eq(list[2].name, "Cooking")
+end)
+
+test("Data.List groups by category, filters and collapses", function()
+    local recipes = ns.Data.Index(ns.Data.Crafters(ctx()))
+    local items, count = ns.Data.List(recipes, { prof = 164, query = "" }, metaOf, itemName)
+    eq(count, 3)
+    eq(items[1].header and items[1].label, "Armor")
+    eq(items[2].name, "Imperial Plate")
+    eq(items[3].name, "Lionheart Helm")
+    eq(items[4].label, "Weapons")
+    eq(items[5].name, "Arcanite Reaper")
+    eq(ns.Data.CrafterText(items[5]), "3 · 2 online")
+
+    items = ns.Data.List(recipes, { prof = "all", query = "" }, metaOf, itemName)
+    eq(items[1].label, "Blacksmithing", "All groups by profession")
+
+    items, count = ns.Data.List(recipes, { prof = "all", query = "bar" }, metaOf, itemName)
+    eq(count, 1, "search matches reagent names")
+    eq(items[2].name, "Arcanite Reaper")
+    items, count = ns.Data.List(recipes, { prof = "all", query = "kael" }, metaOf, itemName)
+    eq(count, 2, "search matches crafter names")
+
+    items = ns.Data.List(recipes, { prof = 164, query = "", collapsed = { Armor = true } }, metaOf, itemName)
+    eq(items[1].collapsed, true)
+    eq(items[2].label, "Weapons", "collapsed group hides its rows")
+
+    items, count = ns.Data.List(recipes, { prof = 185, query = "", onlineOnly = true }, metaOf, itemName)
+    eq(count, 0, "only an offline alt has Chili")
+end)
+
+test("Data.StatusText", function()
+    eq(ns.Data.StatusText({ state = "you" }), "You")
+    eq(ns.Data.StatusText({ state = "addon" }), "Online")
+    eq(ns.Data.StatusText({ state = "offline", lastOnline = 2 * 86400 }), "Offline · seen 2d ago")
+    eq(ns.Data.StatusText({ state = "offline", updated = 1000 }, 1000 + 5 * 3600), "Offline · seen 5h ago")
+    eq(ns.Data.StatusText({ state = "offline", mine = true }), "Your character")
 end)
 
 print(passed .. " passed, " .. failed .. " failed")

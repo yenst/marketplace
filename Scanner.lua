@@ -100,6 +100,30 @@ function Scanner.Store(char, profession, meta, now)
     return profession
 end
 
+-- Recipe metadata for any recipe ID, from the cache or looked up and cached.
+-- Forever answers these lookups without the profession window open.
+function Scanner.Meta(id)
+    local cache = ns.db.recipes
+    if cache[id] then
+        return cache[id]
+    end
+    local T = C_TradeSkillUI
+    local info = T and T.GetRecipeInfo and T.GetRecipeInfo(id)
+    if not info or not info.name then
+        return nil
+    end
+    local schematic = T.GetRecipeSchematic and T.GetRecipeSchematic(id, false)
+    local meta = {
+        name = info.name,
+        icon = info.icon,
+        item = schematic and schematic.outputItemID,
+        cat = info.categoryID or 0,
+        reagents = reagentsOf(schematic),
+    }
+    cache[id] = meta
+    return meta
+end
+
 -- Number of learned recipes in a profession record.
 function Scanner.Count(profession)
     local n = 0
