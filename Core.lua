@@ -20,6 +20,8 @@ local function initDB()
     db.guilds = db.guilds or {}
     -- Recipe metadata by recipe ID: { name, icon, item, prof, cat, reagents }.
     db.recipes = db.recipes or {}
+    -- Public listings from anyone, by sender: { professions, class, hash, updated }.
+    db.public = db.public or {}
     ns.db = db
 end
 
@@ -103,6 +105,7 @@ function handlers.ADDON_LOADED(name)
     if name == ADDON then
         initDB()
         ns.Sync.Init()
+        ns.Public.Init()
         events:UnregisterEvent("ADDON_LOADED")
     end
 end
@@ -114,10 +117,12 @@ function handlers.PLAYER_LOGIN()
     C_Timer.After(5, fixRealm)
     -- Give the guild roster and realm name a moment before saying hello.
     C_Timer.After(10, function() ns.Sync.Announce(true) end)
+    C_Timer.After(12, function() ns.Public.Join() end)
 end
 
 function handlers.CHAT_MSG_ADDON(prefix, text, channel, sender)
     ns.Sync.OnMessage(prefix, text, channel, sender)
+    ns.Public.OnMessage(prefix, text, channel, sender)
 end
 
 function handlers.PLAYER_ENTERING_WORLD()

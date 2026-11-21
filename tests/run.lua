@@ -3,7 +3,7 @@
 date, time = os.date, os.time
 
 local ns = {}
-for _, file in ipairs({ "Init", "Scanner", "Sync", "Data", "Auctionator" }) do
+for _, file in ipairs({ "Init", "Scanner", "Sync", "Listings", "Data", "Auctionator" }) do
     assert(loadfile(file .. ".lua"))("Marketplace", ns)
 end
 
@@ -310,6 +310,100 @@ test("Data.StatusText", function()
     eq(ns.Data.StatusText({ state = "offline", lastOnline = 2 * 86400 }), "Offline · seen 2d ago")
     eq(ns.Data.StatusText({ state = "offline", updated = 1000 }, 1000 + 5 * 3600), "Offline · seen 5h ago")
     eq(ns.Data.StatusText({ state = "offline", mine = true }), "Your character")
+end)
+
+local coins = function(c) return ns.FormatMoney(c) end
+
+local function listingChar()
+    return {
+        class = "WARRIOR",
+        professions = {
+            [164] = { id = 164, name = "Blacksmithing", skill = 300, maxSkill = 300,
+                recipes = { [101] = 7, [102] = 7, [103] = 8 },
+                categories = { [7] = { name = "Weapons", parent = 0 }, [8] = { name = "Armor", parent = 0 } } },
+            [185] = { id = 185, name = "Cooking", skill = 150, maxSkill = 225, recipes = { [201] = 3 }, categories = {} },
+        },
+    }
+end
+
+test("Listings terms and overrides", function()
+    local char = listingChar()
+    local l = ns.Listings.Get(char, 164)
+    eq(ns.Listings.Terms(l, 101), nil, "off until switched on")
+    l.on, l.mats, l.fee = true, "either", 20000
+    eq(ns.Listings.Terms(l, 101).fee, 20000, "default terms")
+    l.recipes[102] = false
+    l.recipes[103] = { mats = "provide", fee = 0, price = 4500000, tips = false }
+    eq(ns.Listings.Terms(l, 102), nil, "unlisted recipe")
+    eq(ns.Listings.Terms(l, 103).price, 4500000, "own terms")
+    local listed, custom, total = ns.Listings.Counts(l, char.professions[164])
+    eq(listed .. "/" .. custom .. "/" .. total, "2/1/3")
+    eq(ns.Listings.Summary(ns.Listings.Terms(l, 101), coins), "2g · or mats + 2g")
+    eq(ns.Listings.Summary(ns.Listings.Terms(l, 103), coins), "450g")
+    eq(ns.Listings.Summary({ mats = "bring", fee = 0 }, coins), "Free")
+    eq(ns.Listings.Summary({ mats = "bring", fee = 500, tips = true }, coins), "Tips")
+    eq(ns.Listings.Summary({ mats = "provide", fee = 0 }, coins), "Mats only")
+
+    local shared = ns.Listings.Shareable(char)
+    assert(shared[164] and not shared[185], "only listed professions")
+    assert(shared[164].recipes[101] and not shared[164].recipes[102] and shared[164].custom[103], "listed recipes and own terms")
+end)
+
+test("Listings codec round trip", function()
+    local char = listingChar()
+    local l = ns.Listings.Get(char, 164)
+    l.on, l.fee, l.tips = true, 15000, false
+    l.recipes[103] = { mats = "provide", fee = 0, price = 4500000, tips = false }
+    local shared = ns.Listings.Shareable(char)
+    local lines, hash = ns.Listings.Encode(shared, "WARRIOR")
+    eq(hash, ns.Listings.Hash(shared), "announced hash matches the transfer")
+    eq(lines[2], "N:WARRIOR", "class line")
+    for _, line in ipairs(lines) do
+        assert(#line <= 250, "line too long")
+    end
+    local d = ns.Listings.NewDecoder()
+    local got, gotHash, class
+    for _, line in ipairs(lines) do
+        local a, b, c = d.Feed(line)
+        if a then got, gotHash, class = a, b, c end
+    end
+    assert(got, "decoded")
+    eq(gotHash, hash)
+    eq(class, "WARRIOR")
+    local p = got[164]
+    eq(p.terms.fee, 15000)
+    eq(p.recipes[101], 7)
+    eq(p.custom[103].price, 4500000)
+    eq(p.custom[103].mats, "provide")
+    eq(p.categories[8].name, "Armor")
+    eq(ns.Listings.Hash({}), "0", "nothing listed")
+end)
+
+test("Data public crafters and cheapest listing", function()
+    local terms = { mats = "bring", fee = 30000 }
+    local public = {
+        ["Grim Bolt"] = { class = "PALADIN", updated = 100, professions = { [164] = { id = 164, name = "Blacksmithing", terms = terms, custom = { [101] = { mats = "bring", fee = 5000 } }, recipes = { [101] = 7, [102] = 7 }, categories = {} } } },
+        ["Ash Wyn"] = { updated = 100, professions = { [164] = { id = 164, name = "Blacksmithing", terms = { mats = "bring", fee = 0, tips = true }, custom = {}, recipes = { [101] = 7 }, categories = {} } } },
+        ["Tester"] = { professions = {} },
+    }
+    local crafters = ns.Data.PublicCrafters({
+        public = public,
+        stateOf = function(name) return name == "Grim Bolt" and "live" or "offline" end,
+        isMe = function(name) return name == "Tester" end,
+    })
+    eq(#crafters, 2, "self left out")
+    local recipes = ns.Data.Index(crafters)
+    eq(recipes[101].crafters[1].name, "Grim Bolt", "live first")
+    eq(ns.Data.TermsFor(recipes[101].crafters[1], recipes[101]).fee, 5000, "own terms win")
+    local items = ns.Data.List(recipes, { prof = "all", query = "" }, function(id) return { name = "R" .. id } end, function() end)
+    for _, item in ipairs(items) do
+        if not item.header and item.recipe.id == 101 then
+            assert(item.cheapest.tips, "tips counts as cheapest")
+            eq(item.online, 1)
+        end
+    end
+    eq(ns.Data.StatusText(crafters[2], 100 + 7200), "Live now")
+    eq(ns.Data.StatusText(crafters[1], 100 + 7200), "Offline · listed 2h ago")
 end)
 
 print(passed .. " passed, " .. failed .. " failed")

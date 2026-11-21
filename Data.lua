@@ -7,7 +7,10 @@ local Data = {}
 ns.Data = Data
 
 -- Display order of crafter states in a recipe's crafter list.
-Data.STATE_ORDER = { you = 0, addon = 1, noaddon = 2, offline = 3 }
+-- Guild: you / addon / noaddon / offline. Public: you / live / pinging /
+-- noreply / offline.
+Data.STATE_ORDER = { you = 0, addon = 1, live = 1, noaddon = 2, pinging = 2, noreply = 3, offline = 4 }
+local ONLINE = { you = true, addon = true, noaddon = true, live = true }
 
 -- "Billy Joel-Realm" -> "Billy Joel". Forever sends names without a realm,
 -- the roster may add one; this lines them up.
@@ -16,8 +19,9 @@ function Data.ShortName(name)
 end
 
 local function online(state)
-    return state ~= "offline"
+    return ONLINE[state] == true
 end
+Data.IsOnline = online
 
 -- ctx = {
 --   own = { { name, class, professions, current = bool }, ... }   your characters in this guild
@@ -58,6 +62,42 @@ function Data.Crafters(ctx)
     end
     table.sort(list, function(a, b) return a.name < b.name end)
     return list
+end
+
+-- Public listers: you (if you list anything) and everyone whose listings
+-- arrived over the channel.
+-- ctx = {
+--   me = { name, class, professions = Listings.Shareable() }
+--   public = { [sender] = { professions, class, updated } }
+--   stateOf(sender) -> "live" | "pinging" | "noreply" | "offline"
+--   isMe(sender) -> bool
+-- }
+function Data.PublicCrafters(ctx)
+    local list = {}
+    local me = ctx.me
+    if me and next(me.professions or {}) then
+        list[1] = { key = Data.ShortName(me.name), name = Data.ShortName(me.name), class = me.class, state = "you", mine = true, public = true, professions = me.professions }
+    end
+    for sender, entry in pairs(ctx.public or {}) do
+        if not (ctx.isMe and ctx.isMe(sender)) then
+            list[#list + 1] = {
+                key = sender, name = Data.ShortName(sender), whisperTo = sender, class = entry.class, public = true,
+                state = ctx.stateOf and ctx.stateOf(sender) or "offline", updated = entry.updated,
+                professions = entry.professions or {},
+            }
+        end
+    end
+    table.sort(list, function(a, b) return a.name < b.name end)
+    return list
+end
+
+-- A public crafter's terms for a recipe (nil for guild data).
+function Data.TermsFor(crafter, recipe)
+    local p = crafter.professions[recipe.prof]
+    if not p or not p.terms then
+        return nil
+    end
+    return p.custom and p.custom[recipe.id] or p.terms
 end
 
 -- recipes = { [recipeID] = { prof, profName, cat, catName, crafters = {...} } }
@@ -191,7 +231,15 @@ function Data.List(recipes, filter, metaOf, itemName)
                     sortKey[key] = filter.prof == "all" and r.profName or (r.cat == 0 and math.huge or r.cat)
                 end
                 local list = groups[key]
-                list[#list + 1] = { recipe = r, name = meta.name or ("Recipe " .. id), online = on, total = #r.crafters }
+                local row = { recipe = r, name = meta.name or ("Recipe " .. id), online = on, total = #r.crafters }
+                -- Public: the cheapest listing, for "from 2g".
+                for _, c in ipairs(r.crafters) do
+                    local terms = Data.TermsFor(c, r)
+                    if terms and (not row.cheapest or ns.Listings.SortCost(terms) < ns.Listings.SortCost(row.cheapest)) then
+                        row.cheapest = terms
+                    end
+                end
+                list[#list + 1] = row
                 count = count + 1
             end
         end
@@ -233,6 +281,18 @@ function Data.StatusText(crafter, now)
         return "Online"
     elseif crafter.state == "noaddon" then
         return "Online · Marketplace not running"
+    elseif crafter.state == "live" then
+        return "Live now"
+    elseif crafter.state == "pinging" then
+        return "Checking…"
+    end
+    if crafter.public then
+        local prefix = crafter.state == "noreply" and "Not responding" or "Offline"
+        local ago = crafter.updated and now and now - crafter.updated
+        if not ago then
+            return prefix
+        end
+        return prefix .. " · listed " .. Data.Ago(ago) .. " ago"
     end
     local ago = crafter.lastOnline
     if not ago and crafter.updated and now then
@@ -241,13 +301,15 @@ function Data.StatusText(crafter, now)
     if not ago then
         return crafter.mine and "Your character" or "Offline"
     end
-    local text
-    if ago < 3600 then
-        text = math.max(1, math.floor(ago / 60)) .. "m"
-    elseif ago < 86400 then
-        text = math.floor(ago / 3600) .. "h"
-    else
-        text = math.floor(ago / 86400) .. "d"
+    return (crafter.mine and "Your character · " or "Offline · ") .. "seen " .. Data.Ago(ago) .. " ago"
+end
+
+-- Seconds as "5m", "3h", "2d".
+function Data.Ago(seconds)
+    if seconds < 3600 then
+        return math.max(1, math.floor(seconds / 60)) .. "m"
+    elseif seconds < 86400 then
+        return math.floor(seconds / 3600) .. "h"
     end
-    return (crafter.mine and "Your character · " or "Offline · ") .. "seen " .. text .. " ago"
+    return math.floor(seconds / 86400) .. "d"
 end

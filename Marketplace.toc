@@ -14,10 +14,13 @@ embeds.xml
 Init.lua
 Scanner.lua
 Sync.lua
+Listings.lua
+Public.lua
 Data.lua
 Auctionator.lua
 Theme.lua
 Widgets.lua
 Window.lua
+MyListings.lua
 Probe.lua
 Core.lua

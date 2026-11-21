@@ -44,7 +44,12 @@ function Sync.Hash(professions)
             parts[#parts + 1] = tostring(recipe)
         end
     end
-    local text, h = table.concat(parts, ","), 5381
+    return Sync.Djb2(table.concat(parts, ","))
+end
+
+-- 8 hex digit fingerprint of a string.
+function Sync.Djb2(text)
+    local h = 5381
     for i = 1, #text do
         h = (h * 33 + text:byte(i)) % 4294967296
     end
@@ -63,7 +68,7 @@ function Sync.Shareable(professions)
 end
 
 -- Appends "<head><item><sep><item>…" lines, each at most MAX_LINE bytes.
-local function chunk(lines, head, items, sep)
+function Sync.Chunk(lines, head, items, sep)
     local line, count = head, 0
     for _, item in ipairs(items) do
         if count > 0 and #line + #sep + #item > MAX_LINE then
@@ -89,12 +94,12 @@ function Sync.Encode(professions)
             local c = p.categories[cat]
             cats[#cats + 1] = cat .. "=" .. (c.parent or 0) .. "=" .. clean(c.name)
         end
-        chunk(lines, "C:" .. id .. ":", cats, ";")
+        Sync.Chunk(lines, "C:" .. id .. ":", cats, ";")
         local recipes = {}
         for _, recipe in ipairs(sortedKeys(p.recipes)) do
             recipes[#recipes + 1] = recipe .. "." .. (p.recipes[recipe] or 0)
         end
-        chunk(lines, "I:" .. id .. ":", recipes, ",")
+        Sync.Chunk(lines, "I:" .. id .. ":", recipes, ",")
     end
     lines[#lines + 1] = "E:" .. hash
     return lines, hash
@@ -164,7 +169,7 @@ local function pump()
         pumping = false
         return
     end
-    local result = C_ChatInfo.SendAddonMessage(Sync.PREFIX, item.text, item.channel, item.target)
+    local result = C_ChatInfo.SendAddonMessage(item.prefix, item.text, item.channel, item.target)
     local codes = Enum and Enum.SendAddonMessageResult or {}
     local throttled = result == (codes.AddonMessageThrottle or 3) or result == (codes.ChannelThrottle or 8)
     if not throttled then
@@ -173,12 +178,17 @@ local function pump()
     C_Timer.After(0.25, pump)
 end
 
-local function send(text, channel, target)
-    queue[#queue + 1] = { text = text, channel = channel, target = target }
+-- Queues an addon message (Public uses this too, with its own prefix).
+function Sync.Send(text, channel, target, prefix)
+    queue[#queue + 1] = { prefix = prefix or Sync.PREFIX, text = text, channel = channel, target = target }
     if not pumping then
         pumping = true
         pump()
     end
+end
+
+local function send(text, channel, target)
+    Sync.Send(text, channel, target)
 end
 
 local function myShare()
@@ -196,7 +206,7 @@ end
 Sync.code = string.format("%06x", math.random(0, 16777215))
 Sync.selfName = nil
 
-local function isMe(sender)
+function Sync.IsMe(sender)
     if Sync.selfName then
         return sender == Sync.selfName
     end
@@ -208,7 +218,7 @@ local function isMe(sender)
 end
 
 -- Our own guild hello came back: remember the name it came from.
-local function learnSelf(sender)
+function Sync.LearnSelf(sender)
     Sync.selfName = sender
     if ns.char then
         ns.char.fullName = sender
@@ -291,10 +301,10 @@ function Sync.OnMessage(prefix, text, channel, sender)
     end
     local code = text:match("^H:%d+:%x+:(%x+)$")
     if code and code == Sync.code then
-        learnSelf(sender)
+        Sync.LearnSelf(sender)
         return
     end
-    if isMe(sender) then
+    if Sync.IsMe(sender) then
         return
     end
     Sync.seen[sender] = time()
