@@ -1,0 +1,18 @@
+## Interface: 16001, 11509
+## Title: |cff8c7cf5Marketplace|r
+## Notes: Find who can craft it: browse your guild's professions, list your own crafts publicly with your fee and materials terms.
+## Author: yenst
+## Version: @project-version@
+## X-License: MIT
+## X-Website: https://github.com/yenst/marketplace
+## IconTexture: Interface\Icons\INV_Misc_Coin_01
+## SavedVariables: MarketplaceDB
+## OptionalDeps: EllesmereUI, LibDataBroker-1.1, LibDBIcon-1.0
+
+embeds.xml
+
+Init.lua
+Theme.lua
+Widgets.lua
+Window.lua
+Core.lua
