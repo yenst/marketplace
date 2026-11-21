@@ -12,6 +12,7 @@
 embeds.xml
 
 Init.lua
+Scanner.lua
 Theme.lua
 Widgets.lua
 Window.lua

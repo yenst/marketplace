@@ -76,9 +76,13 @@ for _, f in ipairs(allFrames) do
 end
 local function fire(event, ...) eventFrame.scripts.OnEvent(eventFrame, event, ...) end
 
+UnitClass = function() return "Warrior", "WARRIOR", 1 end
 fire("ADDON_LOADED", "Marketplace")
 fire("PLAYER_LOGIN")
 assert(MarketplaceDB and MarketplaceDB.chars and MarketplaceDB.guilds, "saved data initialised")
+
+UnitClass = function() return "Warrior", "WARRIOR", 1 end
+SlashCmdList.MARKETPLACE("status")
 
 SlashCmdList.MARKETPLACE("")
 assert(_G.MarketplaceWindow and _G.MarketplaceWindow.shown, "slash command opens the window")
@@ -108,5 +112,17 @@ C_TradeSkillUI = {
 SlashCmdList.MARKETPLACE("probe trade")
 assert(MarketplaceDB.probe and MarketplaceDB.probe.recipeCount == 2, "trade probe saves recipes")
 assert(MarketplaceDB.probe.recipes[1].category[1].name == "Weapons", "trade probe saves categories")
+
+-- Opening a profession window scans it.
+C_TradeSkillUI.IsTradeSkillReady = function() return true end
+C_TradeSkillUI.GetBaseProfessionInfo = function()
+    return { professionID = 164, professionName = "Blacksmithing", skillLevel = 215, maxSkillLevel = 300 }
+end
+fire("TRADE_SKILL_SHOW")
+local me = MarketplaceDB.chars["Tester-Mirage"]
+assert(me and me.professions[164], "profession window gets scanned")
+assert(MarketplaceDB.recipes[2665].name == "Recipe 2665", "recipe cache filled")
+SlashCmdList.MARKETPLACE("status")
+assert(chat[#chat]:find("Blacksmithing 215/300 %(2 recipes%)"), "status lists the scan")
 
 print("smoke test passed")
