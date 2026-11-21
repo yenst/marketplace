@@ -99,4 +99,14 @@ GetChannelName = function() return 5 end
 SlashCmdList.MARKETPLACE("probe")
 assert(sent[1] == "GUILD" and sent[2] == "CHANNEL", "probe sends over guild and channel")
 
+date = os.date
+C_TradeSkillUI = {
+    GetAllRecipeIDs = function() return { 2665, 3115 } end,
+    GetRecipeInfo = function(id) return { recipeID = id, name = "Recipe " .. id, categoryID = 7, learned = true } end,
+    GetCategoryInfo = function() return { name = "Weapons" } end,
+}
+SlashCmdList.MARKETPLACE("probe trade")
+assert(MarketplaceDB.probe and MarketplaceDB.probe.recipeCount == 2, "trade probe saves recipes")
+assert(MarketplaceDB.probe.recipes[1].category[1].name == "Weapons", "trade probe saves categories")
+
 print("smoke test passed")

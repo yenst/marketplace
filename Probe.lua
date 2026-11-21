@@ -38,6 +38,80 @@ local function listen()
     end)
 end
 
+-- Copies a value into plain saved data: functions become "function",
+-- nesting stops at `depth`.
+local function plain(value, depth)
+    if type(value) == "function" then
+        return "function"
+    elseif type(value) ~= "table" then
+        return value
+    elseif depth <= 0 then
+        return "table"
+    end
+    local out = {}
+    for k, v in pairs(value) do
+        if type(k) == "string" or type(k) == "number" then
+            out[k] = plain(v, depth - 1)
+        end
+    end
+    return out
+end
+
+local function try(fn, ...)
+    if type(fn) ~= "function" then
+        return "missing"
+    end
+    local ok, a, b, c = pcall(fn, ...)
+    if not ok then
+        return "error: " .. tostring(a)
+    end
+    return { plain(a, 4), plain(b, 4), plain(c, 4) }
+end
+
+-- /mkt probe trade, with a profession window open: saves the modern
+-- tradeskill API's function list and a few sample recipes to
+-- MarketplaceDB.probe (written to disk on /reload or logout).
+function Probe.Trade()
+    local T = C_TradeSkillUI
+    if type(T) ~= "table" then
+        ns.Print("C_TradeSkillUI is missing on this client")
+        return
+    end
+    local out = { at = date("%Y-%m-%d %H:%M"), build = { GetBuildInfo() }, functions = {} }
+    for name, value in pairs(T) do
+        out.functions[#out.functions + 1] = name .. (type(value) == "function" and "" or (" (" .. type(value) .. ")"))
+    end
+    table.sort(out.functions)
+    out.isTradeSkillReady = try(T.IsTradeSkillReady)
+    out.baseProfession = try(T.GetBaseProfessionInfo)
+    out.childProfession = try(T.GetChildProfessionInfo)
+    out.tradeSkillLine = try(T.GetTradeSkillLine)
+    out.isLinked = try(T.IsTradeSkillLinked)
+    out.isGuild = try(T.IsTradeSkillGuild)
+    local ids = type(T.GetAllRecipeIDs) == "function" and T.GetAllRecipeIDs() or {}
+    out.recipeCount = #ids
+    out.recipes = {}
+    for i = 1, math.min(#ids, 4) do
+        local id = ids[i]
+        local info = type(T.GetRecipeInfo) == "function" and T.GetRecipeInfo(id) or nil
+        out.recipes[i] = {
+            id = id,
+            info = plain(info, 3),
+            link = try(T.GetRecipeLink, id),
+            itemLink = try(T.GetRecipeItemLink, id),
+            numReagents = try(T.GetRecipeNumReagents, id),
+            reagent1 = try(T.GetRecipeReagentInfo, id, 1),
+            reagentLink1 = try(T.GetRecipeReagentItemLink, id, 1),
+            schematic = try(T.GetRecipeSchematic, id, false),
+            category = info and info.categoryID and try(T.GetCategoryInfo, info.categoryID) or "none",
+            spell = try(GetSpellInfo, id),
+        }
+    end
+    MarketplaceDB.probe = out
+    ns.Print(string.format("saved %d functions and %d of %d recipes; /reload to write them to disk",
+        #out.functions, #out.recipes, #ids))
+end
+
 function Probe.Run()
     local version, build, _, toc = GetBuildInfo()
     ns.Print(string.format("client %s (%s), interface %s", tostring(version), tostring(build), tostring(toc)))
