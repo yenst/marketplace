@@ -170,7 +170,7 @@ end
 -- and the number of matching recipes.
 function Data.List(recipes, filter, metaOf, itemName)
     local query = (filter.query or ""):lower()
-    local groups, order = {}, {}
+    local groups, order, sortKey = {}, {}, {}
     local count = 0
     for id, r in pairs(recipes) do
         if filter.prof == "all" or filter.prof == r.prof then
@@ -186,6 +186,9 @@ function Data.List(recipes, filter, metaOf, itemName)
                 if not groups[key] then
                     groups[key] = {}
                     order[#order + 1] = key
+                    -- The game numbers a profession's categories in the order
+                    -- its window shows them; uncategorised recipes go last.
+                    sortKey[key] = filter.prof == "all" and r.profName or (r.cat == 0 and math.huge or r.cat)
                 end
                 local list = groups[key]
                 list[#list + 1] = { recipe = r, name = meta.name or ("Recipe " .. id), online = on, total = #r.crafters }
@@ -193,7 +196,12 @@ function Data.List(recipes, filter, metaOf, itemName)
             end
         end
     end
-    table.sort(order)
+    table.sort(order, function(a, b)
+        if sortKey[a] == sortKey[b] then
+            return a < b
+        end
+        return sortKey[a] < sortKey[b]
+    end)
     local items = {}
     for _, key in ipairs(order) do
         local rows = groups[key]
