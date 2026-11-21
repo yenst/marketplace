@@ -3,7 +3,7 @@
 date, time = os.date, os.time
 
 local ns = {}
-for _, file in ipairs({ "Init", "Scanner" }) do
+for _, file in ipairs({ "Init", "Scanner", "Sync" }) do
     assert(loadfile(file .. ".lua"))("Marketplace", ns)
 end
 
@@ -110,6 +110,77 @@ test("Scanner.Store saves per profession and fills the cache", function()
     eq(char.professions[164].scannedAt, 1000)
     eq(ns.db.recipes[1263073].prof, 164)
     eq(ns.Scanner.Store(char, nil, nil, 1), nil, "nothing to store")
+end)
+
+-- A big profession: 120 long recipe IDs, names with separators in them.
+local function bigProfessions()
+    local recipes, categories = {}, {}
+    for i = 1, 120 do
+        recipes[1260000 + i] = 2400 + (i % 7)
+    end
+    for c = 2400, 2406 do
+        categories[c] = { name = "Cat: " .. c .. "; part=2", parent = 2425 }
+    end
+    return {
+        [164] = { id = 164, name = "Blacksmithing", skill = 215, maxSkill = 300, scannedAt = 1795251763, recipes = recipes, categories = categories },
+        [129] = { id = 129, name = "First Aid", skill = 180, maxSkill = 225, scannedAt = 1795251763, recipes = { [3275] = 0 }, categories = {} },
+    }
+end
+
+test("Sync.Encode lines fit an addon message", function()
+    local lines = ns.Sync.Encode(bigProfessions())
+    assert(#lines > 5, "split into several lines")
+    for _, line in ipairs(lines) do
+        assert(#line <= 250, "line too long: " .. #line)
+    end
+end)
+
+test("Sync round trip keeps professions, recipes and categories", function()
+    local original = bigProfessions()
+    local lines, hash = ns.Sync.Encode(original)
+    local decoder = ns.Sync.NewDecoder()
+    local got, gotHash
+    for _, line in ipairs(lines) do
+        got, gotHash = decoder.Feed(line)
+    end
+    assert(got, "transfer completes")
+    eq(gotHash, hash)
+    eq(ns.Sync.Hash(got), hash, "same fingerprint after decoding")
+    eq(got[164].skill, 215)
+    eq(got[164].name, "Blacksmithing")
+    eq(got[164].recipes[1260001], 2401)
+    eq(got[164].categories[2401].name, "Cat  2401  part 2", "separators in names are blanked")
+    eq(got[164].categories[2401].parent, 2425)
+    eq(got[129].recipes[3275], 0)
+end)
+
+test("Sync decoder drops incomplete or mismatched transfers", function()
+    local lines = ns.Sync.Encode(bigProfessions())
+    local decoder = ns.Sync.NewDecoder()
+    for i, line in ipairs(lines) do
+        if i ~= 3 then -- a lost line
+            eq(decoder.Feed(line), nil, "nothing until a complete transfer")
+        end
+    end
+    eq(decoder.Feed("E:deadbeef"), nil, "end without a begin")
+    eq(ns.Sync.NewDecoder().Feed("B:2:abcd"), nil, "other protocol versions are ignored")
+end)
+
+test("Sync.Hash changes with recipes and skill", function()
+    local a = bigProfessions()
+    local h = ns.Sync.Hash(a)
+    a[129].skill = 181
+    assert(ns.Sync.Hash(a) ~= h, "skill change")
+    a[129].skill = 180
+    eq(ns.Sync.Hash(a), h, "back to the same")
+    a[129].recipes[3276] = 0
+    assert(ns.Sync.Hash(a) ~= h, "new recipe")
+end)
+
+test("Sync.Shareable leaves out professions without recipes", function()
+    local s = ns.Sync.Shareable({ [356] = { recipes = {} }, [185] = { recipes = { [1] = 0 } } })
+    eq(s[356], nil, "fishing")
+    assert(s[185], "cooking")
 end)
 
 print(passed .. " passed, " .. failed .. " failed")

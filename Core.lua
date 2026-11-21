@@ -102,6 +102,7 @@ local handlers = {}
 function handlers.ADDON_LOADED(name)
     if name == ADDON then
         initDB()
+        ns.Sync.Init()
         events:UnregisterEvent("ADDON_LOADED")
     end
 end
@@ -111,6 +112,12 @@ function handlers.PLAYER_LOGIN()
     fixRealm()
     ns.Theme.Load()
     C_Timer.After(5, fixRealm)
+    -- Give the guild roster and realm name a moment before saying hello.
+    C_Timer.After(10, function() ns.Sync.Announce(true) end)
+end
+
+function handlers.CHAT_MSG_ADDON(prefix, text, channel, sender)
+    ns.Sync.OnMessage(prefix, text, channel, sender)
 end
 
 function handlers.PLAYER_ENTERING_WORLD()

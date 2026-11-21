@@ -61,6 +61,8 @@ STANDARD_TEXT_FONT = "Fonts\\FRIZQT__.TTF"
 tinsert, wipe = table.insert, function(t) for k in pairs(t) do t[k] = nil end return t end
 C_AddOns = { IsAddOnLoaded = function() return false end }
 C_Timer = { After = function(_, fn) fn() end }
+C_ChatInfo = { RegisterAddonMessagePrefix = function() return true end, SendAddonMessage = function() return 0 end }
+IsInGuild = function() return false end
 UnitName = function() return "Tester" end
 GetRealmName = function() return "Mirage" end
 
@@ -138,5 +140,51 @@ assert(chat[#chat]:find("Blacksmithing 215/300 %(2 recipes%)"), "status lists th
 C_Spell = { GetSpellInfo = function(id) return { name = "Spell " .. id } end }
 SlashCmdList.MARKETPLACE("probe resolve")
 assert(MarketplaceDB.probeResolve and #MarketplaceDB.probeResolve.results > 0, "resolve probe records results")
+
+-- Guild sync between us (Tester) and Dan, who also runs Marketplace.
+GetNormalizedRealmName = function() return "Mirage" end
+GetGuildInfo = function() return "Test Guild" end
+local out = {}
+C_ChatInfo.SendAddonMessage = function(prefix, text, channel, target)
+    out[#out + 1] = { prefix = prefix, text = text, channel = channel, target = target }
+    return 0
+end
+local function addon(text, channel, sender) fire("CHAT_MSG_ADDON", "Marketplace", text, channel, sender) end
+local function sentTo(target, pattern)
+    for _, m in ipairs(out) do
+        if m.target == target and m.text:find(pattern) then return true end
+    end
+end
+
+ns.Sync.Announce(true)
+assert(out[#out].channel == "GUILD" and out[#out].text:find("^H:1:%x+$"), "login hello goes to the guild")
+
+local dan = { [185] = { id = 185, name = "Cooking", skill = 150, maxSkill = 150, scannedAt = 1, recipes = { [18238] = 2489 }, categories = { [2489] = { name = "Fish", parent = 0 } } } }
+local danLines, danHash = ns.Sync.Encode(dan)
+out = {}
+addon("H:1:" .. danHash, "GUILD", "Dan-Mirage")
+assert(sentTo("Dan-Mirage", "^R:1$"), "unknown hash: ask Dan for his recipes")
+assert(sentTo("Dan-Mirage", "^H:1:"), "and tell Dan what we have")
+assert(ns.Sync.seen["Dan-Mirage"], "Dan counts as running the addon")
+for _, line in ipairs(danLines) do addon(line, "WHISPER", "Dan-Mirage") end
+local stored = MarketplaceDB.guilds["Test Guild"]["Dan-Mirage"]
+assert(stored and stored.hash == danHash and stored.professions[185].recipes[18238], "Dan's recipes are stored")
+
+out = {}
+addon("H:1:" .. danHash, "WHISPER", "Dan-Mirage")
+assert(not sentTo("Dan-Mirage", "^R:1$"), "known hash: no new request")
+
+out = {}
+addon("R:1", "WHISPER", "Dan-Mirage")
+local decoder, got = ns.Sync.NewDecoder()
+for _, m in ipairs(out) do
+    assert(m.target == "Dan-Mirage" and m.channel == "WHISPER", "our recipes go to Dan by whisper")
+    got = decoder.Feed(m.text) or got
+end
+assert(got and got[164], "Dan gets our Blacksmithing")
+
+out = {}
+addon("H:1:" .. danHash, "GUILD", "Tester-Mirage")
+assert(#out == 0, "our own guild echo is ignored")
 
 print("smoke test passed")

@@ -128,6 +128,7 @@ function Scanner.Queue()
                 ns.Print(string.format("scanned %s: %d recipes", stored.name, Scanner.Count(stored)))
             end
             ns.Refresh()
+            ns.Sync.Announce()
         end
     end)
 end
