@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: |cff8c7cf5Marketplace|r
-## Notes: Find who can craft it: browse your guild's professions, list your own crafts publicly with your fee and materials terms.
+## Notes: Find who can craft it: browse your guild's professions, see who's online and whisper them the recipe.
 ## Author: yenst
 ## Version: @project-version@
 ## X-License: MIT
@@ -14,13 +14,10 @@ embeds.xml
 Init.lua
 Scanner.lua
 Sync.lua
-Listings.lua
-Public.lua
 Data.lua
 Auctionator.lua
 Theme.lua
 Widgets.lua
 Window.lua
-MyListings.lua
 Probe.lua
 Core.lua

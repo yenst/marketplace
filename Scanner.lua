@@ -153,7 +153,6 @@ function Scanner.Queue()
             end
             ns.Refresh()
             ns.Sync.Announce()
-            ns.Public.Announce()
         end
     end)
 end

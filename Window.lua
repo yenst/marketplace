@@ -28,7 +28,7 @@ local STAT_ICONS = {
 }
 
 local frame
-local state = { mode = "guild", prof = "all", query = "", onlineOnly = false, collapsed = {}, selected = nil, offset = 0, crafterOffset = 0 }
+local state = { prof = "all", query = "", onlineOnly = false, collapsed = {}, selected = nil, offset = 0, crafterOffset = 0 }
 local model = { recipes = {}, professions = {}, tabs = {}, crafters = {}, items = {}, rosterSize = 0 }
 
 -- Game data helpers ---------------------------------------------------------
@@ -113,21 +113,7 @@ local function readRoster()
     return roster, size
 end
 
-local function gatherPublic()
-    local crafters = Data.PublicCrafters({
-        me = ns.char and { name = ns.char.name, class = ns.char.class, professions = ns.Public.Mine() },
-        public = ns.Public.Data(),
-        stateOf = function(sender) return ns.Public.State(sender) end,
-        isMe = ns.Sync.IsMe,
-    })
-    model.crafters, model.rosterSize = crafters, 0
-    model.recipes, model.professions = Data.Index(crafters)
-end
-
 local function gather()
-    if state.mode == "public" then
-        return gatherPublic()
-    end
     local guild = IsInGuild() and GetGuildInfo("player") or nil
     local own = {}
     for _, c in pairs(ns.db.chars) do
@@ -166,7 +152,7 @@ local function iconTile(parent, size)
     return tile
 end
 
-local function whisper(name, link, public)
+local function whisper(name, link)
     if ChatFrame_SendTell then
         ChatFrame_SendTell(name)
     elseif ChatFrame_OpenChat then
@@ -174,9 +160,31 @@ local function whisper(name, link, public)
     end
     local editBox = ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow()
     if editBox and link then
-        editBox:Insert(public and ("Hi! I saw your Marketplace listing: could you craft " .. link .. " for me? ")
-            or ("Hi! Could you craft " .. link .. " for me? "))
+        editBox:Insert("Hi! Could you craft " .. link .. " for me? ")
     end
+end
+
+-- Favourites ---------------------------------------------------------------
+
+-- The client's favourite star when it has the atlas (as in the auction
+-- house), else the reputation star.
+local function setStar(tex, on)
+    if C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo("auctionhouse-icon-favorite") then
+        tex:SetAtlas(on and "auctionhouse-icon-favorite" or "auctionhouse-icon-favorite-off")
+        tex:SetDesaturated(false)
+        tex:SetAlpha(on and 1 or 0.5)
+    else
+        tex:SetTexture("Interface\\Common\\ReputationStar")
+        tex:SetTexCoord(0, 0.5, 0, 0.5)
+        tex:SetDesaturated(not on)
+        tex:SetAlpha(on and 1 or 0.35)
+    end
+end
+
+function Window.ToggleFavorite(recipeID)
+    local favorites = ns.db.favorites
+    favorites[recipeID] = not favorites[recipeID] or nil
+    Window.Refresh()
 end
 
 -- Layout --------------------------------------------------------------------
@@ -250,6 +258,9 @@ local function buildList()
         row.selectedBg:SetColorTexture(Theme.accent[1], Theme.accent[2], Theme.accent[3], 0.16)
         row.sign = W.Text(row, 13, Theme.accent)
         row.sign:SetPoint("LEFT", 7, 0)
+        row.star = row:CreateTexture(nil, "ARTWORK")
+        row.star:SetSize(13, 13)
+        row.star:Hide()
         row.label = W.Text(row, 12)
         row.label:SetPoint("LEFT", 22, 0)
         row.label:SetPoint("RIGHT", -150, 0)
@@ -273,9 +284,16 @@ local function buildList()
             self.hover:Hide()
             GameTooltip:Hide()
         end)
-        row:SetScript("OnClick", function(self)
+        row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        row:SetScript("OnClick", function(self, button)
             local item = self.item
             if not item then
+                return
+            end
+            if button == "RightButton" then
+                if not item.header then
+                    Window.ToggleFavorite(item.recipe.id)
+                end
                 return
             end
             if item.header then
@@ -317,7 +335,25 @@ local function buildDetail()
     frame.selIcon = tile.icon
     frame.selName = W.Text(left, 14)
     frame.selName:SetPoint("TOPLEFT", tile, "TOPRIGHT", 10, -3)
-    frame.selName:SetPoint("RIGHT", left, "RIGHT")
+    frame.selName:SetPoint("RIGHT", left, "RIGHT", -30, 0)
+    local fav = CreateFrame("Button", nil, left)
+    fav:SetSize(22, 22)
+    fav:SetPoint("TOPRIGHT", 0, 0)
+    fav.star = fav:CreateTexture(nil, "ARTWORK")
+    fav.star:SetAllPoints()
+    fav:SetScript("OnClick", function()
+        if state.selected then
+            Window.ToggleFavorite(state.selected)
+        end
+    end)
+    fav:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine(ns.db.favorites[state.selected] and "Remove from favorites" or "Add to favorites", 1, 1, 1)
+        GameTooltip:AddLine("Favorites are listed at the top. Right-click a recipe in the list to do the same.", 0.7, 0.7, 0.7, true)
+        GameTooltip:Show()
+    end)
+    fav:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    frame.favorite = fav
     frame.selSub = W.Text(left, 11, Theme.muted)
     frame.selSub:SetPoint("TOPLEFT", frame.selName, "BOTTOMLEFT", 0, -5)
 
@@ -433,10 +469,8 @@ local function buildDetail()
         row.status = W.Text(row, 11, Theme.muted)
         row.status:SetPoint("BOTTOMLEFT", 20, 2)
         row.status:SetPoint("RIGHT", -76, 0)
-        row.fee = W.Text(row, 12, Theme.text, "RIGHT")
-        row.fee:SetPoint("TOPRIGHT", -76, -2)
         row.whisper = W.Button(row, "Whisper", 66, 20, function(self)
-            whisper(self.target, state.selected and recipeLink(state.selected), state.mode == "public")
+            whisper(self.target, state.selected and recipeLink(state.selected))
         end)
         row.whisper:SetPoint("RIGHT")
         frame.crafters[i] = row
@@ -451,39 +485,7 @@ local function buildFooter()
     frame.footer:SetPoint("BOTTOMLEFT", 12, 8)
     local hint = W.Text(frame.browse, 11, Theme.muted, "RIGHT")
     hint:SetPoint("BOTTOMRIGHT", -12, 8)
-    hint:SetText("Shift-click a recipe to link it in chat")
-end
-
-function Window.SetMode(mode)
-    state.mode, state.selected, state.offset, state.crafterOffset = mode, nil, 0, 0
-    for key, button in pairs(frame.modes) do
-        button:SetSelected(key == mode)
-    end
-    frame.browse:SetShown(mode ~= "mine")
-    frame.search:SetText("")
-    if mode == "public" then
-        ns.Public.Activate()
-    end
-    if ns.MyListings then
-        ns.MyListings.Show(frame, mode == "mine")
-    end
-    Window.Refresh()
-end
-
-local function buildModes()
-    frame.modes = {}
-    local mine = W.Button(frame, "My listings", 84, 20, function() Window.SetMode("mine") end)
-    mine:SetPoint("TOPRIGHT", -34, -5)
-    local public = W.Button(frame, "Public", 60, 20, function() Window.SetMode("public") end)
-    public:SetPoint("RIGHT", mine, "LEFT", -4, 0)
-    W.Tooltip(public, function(tooltip)
-        tooltip:AddLine("Public listings", 1, 1, 1)
-        tooltip:AddLine("Crafts anyone running Marketplace offers, with their fee and materials terms.", 0.7, 0.7, 0.7, true)
-    end)
-    local guild = W.Button(frame, "Guild", 56, 20, function() Window.SetMode("guild") end)
-    guild:SetPoint("RIGHT", public, "LEFT", -4, 0)
-    guild:SetSelected(true)
-    frame.modes.guild, frame.modes.public, frame.modes.mine = guild, public, mine
+    hint:SetText("Shift-click to link in chat · right-click to favorite")
 end
 
 local function buildTabs()
@@ -506,7 +508,6 @@ local function build()
     frame.subtitle:Hide()
     frame.browse = CreateFrame("Frame", nil, frame)
     frame.browse:SetAllPoints()
-    buildModes()
     buildHeader()
     buildFilters()
     buildList()
@@ -529,9 +530,6 @@ local function crafterHint(crafters)
     local n = 0
     for _ in pairs(crafters) do
         n = n + 1
-    end
-    if state.mode == "public" then
-        return n > 0 and ns.Plural(n, "lister") or "Nobody lists this publicly yet"
     end
     return n > 0 and ns.Plural(n, "crafter") or "Nobody in your guild has shared this yet"
 end
@@ -584,18 +582,7 @@ local function drawHeader()
     end
     frame.barFill:SetShown(onlineNow > 0)
     frame.barFill:SetWidth(math.max(1, 298 * (total > 0 and onlineNow / total or 0)))
-    frame.barText:SetText(string.format(state.mode == "public" and "%d of %s live" or "%d of %s online", onlineNow, ns.Plural(total, "crafter")))
-end
-
--- "3 listings · from 2g"
-function Window.FromText(item)
-    local text = ns.Plural(item.total, "listing")
-    local t = item.cheapest
-    if t then
-        local cost = ns.Listings.SortCost(t)
-        text = text .. " · from " .. (t.tips and "tips" or (cost == 0 and "free" or ns.AH.Money(cost)))
-    end
-    return text
+    frame.barText:SetText(string.format("%d of %s online", onlineNow, ns.Plural(total, "crafter")))
 end
 
 function Window.DrawList()
@@ -611,7 +598,13 @@ function Window.DrawList()
         if item and item.header then
             row.band:Show()
             row.sign:SetText(item.collapsed and "+" or "-")
-            row.label:SetPoint("LEFT", 22, 0)
+            row.star:SetShown(item.favorites)
+            if item.favorites then
+                row.star:ClearAllPoints()
+                row.star:SetPoint("LEFT", 20, 0)
+                setStar(row.star, true)
+            end
+            row.label:SetPoint("LEFT", item.favorites and 38 or 22, 0)
             row.label:SetText(item.label)
             row.label:SetTextColor(unpack(Theme.text))
             row.count:SetText(ns.Plural(item.count, "recipe"))
@@ -622,20 +615,16 @@ function Window.DrawList()
             local meta = ns.Scanner.Meta(item.recipe.id) or {}
             local quality = meta.item and itemQuality(meta.item)
             row.sign:SetText("")
+            row.star:Hide()
             row.label:SetPoint("LEFT", 34, 0)
             row.label:SetText(Theme.QualityHex(quality or 1) .. item.name .. "|r")
-            row.count:SetText(state.mode == "public" and Window.FromText(item) or Data.CrafterText(item))
+            row.count:SetText(Data.CrafterText(item))
             row.dot:SetShown(item.online > 0)
             row.selectedBg:SetShown(item.recipe.id == state.selected)
         end
     end
     local count = model.count or 0
-    if state.mode == "public" and next(model.recipes) == nil then
-        frame.empty:SetText("No public listings yet. They show up as players who run Marketplace list their crafts; list yours under My listings.")
-    elseif state.mode == "public" and count == 0 and state.prof ~= "all" and (state.query or "") == "" and not state.onlineOnly then
-        local p = model.tabs and model.tabs[state.prof]
-        frame.empty:SetText("Nobody lists " .. (p and p.name or "this profession") .. " publicly yet.")
-    elseif next(model.recipes) == nil then
+    if next(model.recipes) == nil then
         frame.empty:SetText("Nothing here yet. Open your profession windows once to scan them; guildmates who run Marketplace show up as they log in.")
     elseif count == 0 and state.prof ~= "all" and (state.query or "") == "" and not state.onlineOnly then
         local p = model.tabs and model.tabs[state.prof]
@@ -743,21 +732,12 @@ function Window.DrawDetail()
     local meta = ns.Scanner.Meta(recipe.id) or {}
     local quality = meta.item and itemQuality(meta.item)
     frame.selIcon:SetTexture((meta.item and itemIcon(meta.item)) or meta.icon)
+    setStar(frame.favorite.star, ns.db.favorites[recipe.id] == true)
     frame.selName:SetText(Theme.QualityHex(quality or 1) .. (meta.name or ("Recipe " .. recipe.id)) .. "|r")
     frame.selSub:SetText(recipe.profName .. (recipe.catName ~= "Other" and (" · " .. recipe.catName) or ""))
     drawReagents(meta)
 
     local list = recipe.crafters
-    local public = state.mode == "public"
-    if public then
-        local names = {}
-        for _, c in ipairs(list) do
-            if c.whisperTo then
-                names[#names + 1] = c.whisperTo
-            end
-        end
-        ns.Public.Ping(names)
-    end
     state.crafterOffset = math.max(0, math.min(state.crafterOffset, math.max(0, #list - CRAFTER_ROWS)))
     for i, row in ipairs(frame.crafters) do
         local c = list[state.crafterOffset + i]
@@ -768,58 +748,15 @@ function Window.DrawDetail()
             row.dot:SetAlpha((c.state == "noaddon" or c.state == "pinging") and 0.45 or 1)
             row.name:SetText(c.name)
             row.name:SetTextColor(unpack(onlineState and classColor(c.class) or Theme.muted))
-            row.name:SetPoint("RIGHT", public and -160 or -76, 0)
-            local status = Data.StatusText(c, time())
-            local terms = public and Data.TermsFor(c, recipe)
-            if terms then
-                row.fee:SetText(Window.TermsPrice(terms))
-                status = status .. " · " .. ns.Listings.MATS_LABEL[terms.mats]
-            else
-                row.fee:SetText("")
-            end
-            row.status:SetText(status)
-            row.whisper.target = c.whisperTo or c.name
-            if public then
-                row.whisper:SetShown(c.state ~= "you")
-            else
-                row.whisper:SetShown(c.state == "addon" or c.state == "noaddon")
-            end
+            row.status:SetText(Data.StatusText(c, time()))
+            row.whisper.target = c.name
+            row.whisper:SetShown(c.state == "addon" or c.state == "noaddon")
         end
     end
     frame.crafterMore:SetText(#list > CRAFTER_ROWS and string.format("%d of %d  (scroll)", math.min(#list, state.crafterOffset + CRAFTER_ROWS), #list) or "")
 end
 
--- What a listing costs you, in the crafter row: the fee with your mats, or
--- the price with theirs (estimated from Auctionator when it's "mats + fee").
-function Window.TermsPrice(terms)
-    if terms.mats ~= "provide" then
-        return ns.Listings.FeeText(terms, ns.AH.Money)
-    end
-    if terms.price then
-        return ns.AH.Money(terms.price)
-    end
-    local cost = frame.cost
-    if cost and cost.unknown == 0 and cost.total > 0 then
-        return "~" .. ns.AH.Money(cost.total + (terms.tips and 0 or terms.fee or 0))
-    end
-    return ns.Listings.PriceText(terms, ns.AH.Money)
-end
-
 local function drawFooter()
-    if state.mode == "public" then
-        local mine, listers = 0, 0
-        for _ in pairs(ns.Public.Mine()) do
-            mine = mine + 1
-        end
-        for _, c in ipairs(model.crafters) do
-            if not c.mine then
-                listers = listers + 1
-            end
-        end
-        frame.footer:SetText(string.format("%s listing publicly · you list %s", ns.Plural(listers, "player"),
-            mine > 0 and ns.Plural(mine, "profession") or "nothing yet"))
-        return
-    end
     local others = 0
     for _, c in ipairs(model.crafters) do
         if not c.mine then
@@ -837,12 +774,9 @@ function Window.Refresh()
     if not frame or not frame:IsShown() then
         return
     end
-    if state.mode == "mine" then
-        ns.MyListings.Draw() -- leaves the edit boxes alone while typing
-        return
-    end
     gather()
     drawTabs()
+    state.favorites = ns.db.favorites
     model.items, model.count = Data.List(model.recipes, state, function(id) return ns.Scanner.Meta(id) end, itemName)
     if not state.selected or not model.recipes[state.selected] then
         state.selected = nil

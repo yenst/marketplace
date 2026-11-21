@@ -295,95 +295,15 @@ win.search:SetText("")
 win.search.scripts.OnTextChanged(win.search)
 assert(win.footer.text:find("Data from 1 of 2 guild members"), "footer coverage: " .. tostring(win.footer.text))
 
--- My listings: list Blacksmithing publicly, unlist a recipe, give one its own terms.
-local function pub(text, channel, sender) fire("CHAT_MSG_ADDON", "MktPublic", text, channel, sender) end
-local function sentPublic(pattern, channel, target)
-    for _, m in ipairs(out) do
-        if m.prefix == "MktPublic" and m.text:find(pattern) and (not channel or m.channel == channel) and (not target or m.target == target) then return m end
-    end
-end
-ns.Public.Join()
-win.modes.mine.scripts.OnClick(win.modes.mine)
-local mine = ns.MyListings.panel
-assert(mine and mine.shown and not win.browse.shown, "My listings replaces the browser")
-assert(mine.profTitle.text == "Blacksmithing", "first profession selected")
-assert(mine.profs[1].badge.text == "Guild only", "not listed yet")
-out = {}
-mine.listToggle.scripts.OnClick(mine.listToggle)
-assert(MarketplaceDB.chars["Tester-Mirage"].listings[164].on, "listed publicly")
-assert(mine.profs[1].badge.text == "Public", "badge updates")
-local announce = sentPublic("^A:1:%x+:" .. ns.Sync.code .. "$", "CHANNEL")
-assert(announce, "listing announced on the channel")
-mine.defaults.fee.gold:SetText("2")
-mine.defaults.fee.gold.scripts.OnTextChanged(mine.defaults.fee.gold)
-assert(MarketplaceDB.chars["Tester-Mirage"].listings[164].fee == 20000, "default fee saved")
-assert(mine.rows[1].terms.text:find("Bring mats"), "recipe row shows the terms: " .. mine.rows[1].terms.text)
-mine.rows[2].check.scripts.OnClick(mine.rows[2].check)
-assert(mine.rows[2].terms.text == "not listed", "recipe unlisted")
-mine.rows[1].scripts.OnClick(mine.rows[1])
-assert(mine.ovToggle.shown, "own-terms switch for a listed recipe")
-mine.ovToggle.scripts.OnClick(mine.ovToggle)
-local own = MarketplaceDB.chars["Tester-Mirage"].listings[164].recipes[mine.rows[1].id]
-assert(type(own) == "table" and own.fee == 20000, "own terms start from the defaults")
-mine.override.mats.buttons.provide.scripts.OnClick(mine.override.mats.buttons.provide)
-mine.override.price.gold:SetText("450")
-mine.override.price.gold.scripts.OnTextChanged(mine.override.price.gold)
-assert(own.mats == "provide" and own.price == 4500000, "own terms edited")
-assert(mine.rows[1].custom.shown, "row marked as having own terms")
-assert(mine.footer.text:find("Listed publicly: Blacksmithing %(1%)"), "footer: " .. mine.footer.text)
-
--- Public: our echo is ignored, others' questions and pings are answered.
-out = {}
-pub(announce.text, "CHANNEL", "Tester Joel")
-assert(#out == 0, "own channel echo ignored")
-pub("Q:1:abcdef", "CHANNEL", "Vell Storm")
-assert(sentPublic("^A:1:%x+$", "WHISPER", "Vell Storm"), "a query gets our hash by whisper")
-pub("G:1", "WHISPER", "Vell Storm")
-assert(sentPublic("^g:1$", "WHISPER", "Vell Storm"), "ping answered")
-out = {}
-pub("R:1", "WHISPER", "Vell Storm")
-local d, gotListing = ns.Listings.NewDecoder()
-for _, m in ipairs(out) do gotListing = d.Feed(m.text) or gotListing end
-assert(gotListing and gotListing[164] and gotListing[164].custom[mine.rows[1].id].price == 4500000, "our listings go out on request")
-
--- Grim lists Blacksmithing; we fetch it once the Public tab opens.
-local grimChar = { class = "PALADIN", professions = { [164] = { id = 164, name = "Blacksmithing", skill = 300, maxSkill = 300, recipes = { [2665] = 7 }, categories = { [7] = { name = "Weapons", parent = 0 } } } } }
-grimChar.listings = { [164] = { on = true, mats = "bring", fee = 50000, recipes = {} } }
-local grimLines, grimHash = ns.Listings.Encode(ns.Listings.Shareable(grimChar), "PALADIN")
-out = {}
-pub("A:1:" .. grimHash .. ":123456", "CHANNEL", "Grim Bolt")
-assert(not sentPublic("^R:1$"), "nothing fetched before the Public tab is opened")
-win.modes.public.scripts.OnClick(win.modes.public)
-assert(win.browse.shown and not mine.shown, "Public shows the browser again")
-assert(sentPublic("^Q:1:", "CHANNEL"), "opening Public asks the channel")
-assert(sentPublic("^R:1$", "WHISPER", "Grim Bolt"), "announced listings fetched")
-for _, line in ipairs(grimLines) do pub(line, "WHISPER", "Grim Bolt") end
-assert(MarketplaceDB.public["Grim Bolt"] and MarketplaceDB.public["Grim Bolt"].class == "PALADIN", "Grim's listings stored")
+-- Favourites: right-click a recipe, it moves under "Favorites" at the top.
+for _, tab in ipairs(win.tabs) do if tab.title == "Cooking" then tab.scripts.OnClick(tab) end end
 rows = visibleRows()
-local found
-for _, item in ipairs(rows) do
-    if not item.header and item.recipe.id == 2665 then found = item end
-end
-assert(found and found.total == 2, "recipe listed by us and Grim")
-win.selName.text = ""
-for i, row in ipairs(win.rows) do if row.item == found then row.scripts.OnClick(row) end end
-local grimRow
-for _, row in ipairs(win.crafters) do if row.shown and row.name.text == "Grim Bolt" then grimRow = row end end
-assert(grimRow, "Grim in the crafter list")
-assert(grimRow.status.text:find("Live now · Bring mats"), "Grim live with terms: " .. grimRow.status.text)
-assert(grimRow.fee.text:find("5"), "Grim's fee shown: " .. grimRow.fee.text)
-grimRow.whisper.scripts.OnClick(grimRow.whisper)
-assert(told == "Grim Bolt" and inserted:find("Marketplace listing"), "whisper a lister")
-assert(win.footer.text:find("1 player listing publicly"), "public footer: " .. win.footer.text)
-
--- Taking our listings down tells the channel.
-win.modes.mine.scripts.OnClick(win.modes.mine)
-out = {}
-mine.listToggle.scripts.OnClick(mine.listToggle)
-assert(sentPublic("^A:1:0:", "CHANNEL"), "unlisting announces hash 0")
-pub("A:1:0", "CHANNEL", "Grim Bolt")
-assert(not MarketplaceDB.public["Grim Bolt"], "Grim's listings dropped when he unlists")
-win.modes.guild.scripts.OnClick(win.modes.guild)
-assert(win.browse.shown and not mine.shown, "back to the guild browser")
+win.rows[2].scripts.OnClick(win.rows[2], "RightButton")
+assert(MarketplaceDB.favorites[18238], "favourite saved")
+rows = visibleRows()
+assert(rows[1].header and rows[1].label == "Favorites" and rows[2].name == "Spotted Yellowtail", "favourites listed first")
+win.favorite.scripts.OnClick(win.favorite)
+assert(not MarketplaceDB.favorites[18238], "star in the details removes it again")
+assert(visibleRows()[1].label == "Fish", "back in its category")
 
 print("smoke test passed")

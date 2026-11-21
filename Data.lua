@@ -7,10 +7,8 @@ local Data = {}
 ns.Data = Data
 
 -- Display order of crafter states in a recipe's crafter list.
--- Guild: you / addon / noaddon / offline. Public: you / live / pinging /
--- noreply / offline.
-Data.STATE_ORDER = { you = 0, addon = 1, live = 1, noaddon = 2, pinging = 2, noreply = 3, offline = 4 }
-local ONLINE = { you = true, addon = true, noaddon = true, live = true }
+Data.STATE_ORDER = { you = 0, addon = 1, noaddon = 2, offline = 3 }
+local ONLINE = { you = true, addon = true, noaddon = true }
 
 -- "Billy Joel-Realm" -> "Billy Joel". Forever sends names without a realm,
 -- the roster may add one; this lines them up.
@@ -62,42 +60,6 @@ function Data.Crafters(ctx)
     end
     table.sort(list, function(a, b) return a.name < b.name end)
     return list
-end
-
--- Public listers: you (if you list anything) and everyone whose listings
--- arrived over the channel.
--- ctx = {
---   me = { name, class, professions = Listings.Shareable() }
---   public = { [sender] = { professions, class, updated } }
---   stateOf(sender) -> "live" | "pinging" | "noreply" | "offline"
---   isMe(sender) -> bool
--- }
-function Data.PublicCrafters(ctx)
-    local list = {}
-    local me = ctx.me
-    if me and next(me.professions or {}) then
-        list[1] = { key = Data.ShortName(me.name), name = Data.ShortName(me.name), class = me.class, state = "you", mine = true, public = true, professions = me.professions }
-    end
-    for sender, entry in pairs(ctx.public or {}) do
-        if not (ctx.isMe and ctx.isMe(sender)) then
-            list[#list + 1] = {
-                key = sender, name = Data.ShortName(sender), whisperTo = sender, class = entry.class, public = true,
-                state = ctx.stateOf and ctx.stateOf(sender) or "offline", updated = entry.updated,
-                professions = entry.professions or {},
-            }
-        end
-    end
-    table.sort(list, function(a, b) return a.name < b.name end)
-    return list
-end
-
--- A public crafter's terms for a recipe (nil for guild data).
-function Data.TermsFor(crafter, recipe)
-    local p = crafter.professions[recipe.prof]
-    if not p or not p.terms then
-        return nil
-    end
-    return p.custom and p.custom[recipe.id] or p.terms
 end
 
 -- recipes = { [recipeID] = { prof, profName, cat, catName, crafters = {...} } }
@@ -202,8 +164,12 @@ local function matches(recipe, meta, query, itemName)
     return false
 end
 
--- The recipe list the window draws: headers and rows.
---   filter = { prof = "all" | profID, query, onlineOnly, collapsed = { [header] = true } }
+Data.FAVORITES = "Favorites"
+
+-- The recipe list the window draws: headers and rows. Favourite recipes are
+-- grouped under a "Favorites" header at the top instead of their category.
+--   filter = { prof = "all" | profID, query, onlineOnly, collapsed = { [header] = true },
+--              favorites = { [recipeID] = true } }
 --   metaOf(recipeID) -> { name, item, reagents } (name may be nil while loading)
 --   itemName(itemID) -> name or nil
 -- Returns items = { { header = true, label, count, collapsed } | { recipe, name, online, total } }
@@ -222,24 +188,22 @@ function Data.List(recipes, filter, metaOf, itemName)
                 end
             end
             if (not filter.onlineOnly or on > 0) and matches(r, meta, query, itemName) then
-                local key = filter.prof == "all" and r.profName or r.catName
+                local favorite = filter.favorites and filter.favorites[id] or false
+                local key = favorite and Data.FAVORITES or (filter.prof == "all" and r.profName or r.catName)
                 if not groups[key] then
                     groups[key] = {}
                     order[#order + 1] = key
                     -- The game numbers a profession's categories in the order
                     -- its window shows them; uncategorised recipes go last.
-                    sortKey[key] = filter.prof == "all" and r.profName or (r.cat == 0 and math.huge or r.cat)
-                end
-                local list = groups[key]
-                local row = { recipe = r, name = meta.name or ("Recipe " .. id), online = on, total = #r.crafters }
-                -- Public: the cheapest listing, for "from 2g".
-                for _, c in ipairs(r.crafters) do
-                    local terms = Data.TermsFor(c, r)
-                    if terms and (not row.cheapest or ns.Listings.SortCost(terms) < ns.Listings.SortCost(row.cheapest)) then
-                        row.cheapest = terms
+                    -- Favourites come first in either view.
+                    if favorite then
+                        sortKey[key] = filter.prof == "all" and "" or -1
+                    else
+                        sortKey[key] = filter.prof == "all" and r.profName or (r.cat == 0 and math.huge or r.cat)
                     end
                 end
-                list[#list + 1] = row
+                local list = groups[key]
+                list[#list + 1] = { recipe = r, name = meta.name or ("Recipe " .. id), online = on, total = #r.crafters, favorite = favorite }
                 count = count + 1
             end
         end
@@ -255,7 +219,7 @@ function Data.List(recipes, filter, metaOf, itemName)
         local rows = groups[key]
         table.sort(rows, function(a, b) return a.name < b.name end)
         local collapsed = filter.collapsed and filter.collapsed[key] or false
-        items[#items + 1] = { header = true, label = key, count = #rows, collapsed = collapsed }
+        items[#items + 1] = { header = true, label = key, count = #rows, collapsed = collapsed, favorites = key == Data.FAVORITES }
         if not collapsed then
             for _, row in ipairs(rows) do
                 items[#items + 1] = row
@@ -281,18 +245,6 @@ function Data.StatusText(crafter, now)
         return "Online"
     elseif crafter.state == "noaddon" then
         return "Online · Marketplace not running"
-    elseif crafter.state == "live" then
-        return "Live now"
-    elseif crafter.state == "pinging" then
-        return "Checking…"
-    end
-    if crafter.public then
-        local prefix = crafter.state == "noreply" and "Not responding" or "Offline"
-        local ago = crafter.updated and now and now - crafter.updated
-        if not ago then
-            return prefix
-        end
-        return prefix .. " · listed " .. Data.Ago(ago) .. " ago"
     end
     local ago = crafter.lastOnline
     if not ago and crafter.updated and now then

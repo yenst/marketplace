@@ -6,5 +6,4 @@
 - Guild sync over hidden addon messages.
 - Auctionator integration: reagent prices, mats cost, sell price, shopping lists.
 - Money shown with gold, silver and copper coin icons.
-- Public listings over a hidden channel, with live checks for listers.
-- My listings: list professions publicly, default fee and materials terms, per-recipe terms or unlisting.
+- Favorite recipes, listed at the top.
