@@ -125,4 +125,8 @@ assert(MarketplaceDB.recipes[2665].name == "Recipe 2665", "recipe cache filled")
 SlashCmdList.MARKETPLACE("status")
 assert(chat[#chat]:find("Blacksmithing 215/300 %(2 recipes%)"), "status lists the scan")
 
+C_Spell = { GetSpellInfo = function(id) return { name = "Spell " .. id } end }
+SlashCmdList.MARKETPLACE("probe resolve")
+assert(MarketplaceDB.probeResolve and #MarketplaceDB.probeResolve.results > 0, "resolve probe records results")
+
 print("smoke test passed")

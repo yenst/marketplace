@@ -104,6 +104,8 @@ local COMMANDS = {
     probe = function(args)
         if args == "trade" then
             ns.Probe.Trade()
+        elseif args == "resolve" then
+            ns.Probe.Resolve()
         else
             ns.Probe.Run()
         end

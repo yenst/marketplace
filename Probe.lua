@@ -112,6 +112,39 @@ function Probe.Trade()
         #out.functions, #out.recipes, #ids))
 end
 
+-- /mkt probe resolve, with every profession window CLOSED: can recipes from
+-- the cache be looked up without the window? Decides whether guild sync can
+-- send bare recipe IDs.
+function Probe.Resolve()
+    local T = C_TradeSkillUI or {}
+    local ids = {}
+    for id in pairs(MarketplaceDB.recipes or {}) do
+        ids[#ids + 1] = id
+        if #ids == 3 then break end
+    end
+    if #ids == 0 then
+        ns.Print("no recipes cached yet: open a profession window once, close it, then run this")
+        return
+    end
+    local results = {}
+    for _, id in ipairs(ids) do
+        local info = type(T.GetRecipeInfo) == "function" and T.GetRecipeInfo(id) or nil
+        local schematic = type(T.GetRecipeSchematic) == "function" and T.GetRecipeSchematic(id, false) or nil
+        local spell = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id) or nil
+        local link = type(T.GetRecipeLink) == "function" and T.GetRecipeLink(id) or nil
+        local r = {
+            id = id,
+            info = info and info.name or "nil",
+            schematic = schematic and (schematic.name or "?") .. " / " .. #(schematic.reagentSlotSchematics or {}) .. " slots" or "nil",
+            spell = spell and spell.name or "nil",
+            link = link or "nil",
+        }
+        results[#results + 1] = r
+        ns.Print(string.format("%d: info=%s schematic=%s spell=%s link=%s", id, r.info, r.schematic, r.spell, r.link))
+    end
+    MarketplaceDB.probeResolve = { windowOpen = T.IsTradeSkillReady and T.IsTradeSkillReady() or false, results = results }
+end
+
 function Probe.Run()
     local version, build, _, toc = GetBuildInfo()
     ns.Print(string.format("client %s (%s), interface %s", tostring(version), tostring(build), tostring(toc)))
