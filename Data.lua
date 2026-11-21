@@ -109,11 +109,12 @@ Data.KNOWN_PROFESSIONS = {
 -- not, sorted by name: { id, name, crafters = { [key] = crafter } }.
 --   gameList = { { id, name }, ... } from the client (or KNOWN_PROFESSIONS)
 function Data.Tabs(gameList, professions)
-    local byId, list = {}, {}
+    local byId, byName, list = {}, {}, {}
     local function add(id, name)
-        if Data.GATHERING[id] or byId[id] then
+        if Data.GATHERING[id] or byId[id] or byName[name] then
             return
         end
+        byName[name] = true
         local entry = { id = id, name = name, crafters = professions[id] and professions[id].crafters or {} }
         byId[id] = entry
         list[#list + 1] = entry

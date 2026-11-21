@@ -64,23 +64,18 @@ local function professionTexture(id)
     return T and T.GetTradeSkillTexture and T.GetTradeSkillTexture(id)
 end
 
--- Every profession the client knows, as { id, name }; the built-in list if
--- it can't tell us.
+-- The classic crafting professions, named the way the client names them.
+-- (GetAllProfessionTradeSkillLines on Forever returns several skill lines per
+-- profession plus gathering ones, so it isn't used for the tabs.)
 local function gameProfessions()
     local T = C_TradeSkillUI
-    if not (T and T.GetAllProfessionTradeSkillLines) then
-        return Data.KNOWN_PROFESSIONS
-    end
     local list = {}
-    for _, id in ipairs(T.GetAllProfessionTradeSkillLines() or {}) do
-        local info = T.GetProfessionInfoBySkillLineID and T.GetProfessionInfoBySkillLineID(id)
+    for _, p in ipairs(Data.KNOWN_PROFESSIONS) do
+        local info = T and T.GetProfessionInfoBySkillLineID and T.GetProfessionInfoBySkillLineID(p.id)
         local name = info and info.professionName
-        if (not name or name == "") and T.GetTradeSkillDisplayName then
-            name = T.GetTradeSkillDisplayName(id)
-        end
-        list[#list + 1] = { id = id, name = name }
+        list[#list + 1] = { id = p.id, name = (name and name ~= "") and name or p.name }
     end
-    return #list > 0 and list or Data.KNOWN_PROFESSIONS
+    return list
 end
 
 local function classColor(class)

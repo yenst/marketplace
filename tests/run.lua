@@ -273,6 +273,8 @@ test("Data.Tabs lists every crafting profession, shared or not", function()
     for _, p in ipairs(list) do names[#names + 1] = p.name end
     eq(table.concat(names, ","), "Alchemy,Blacksmithing,Cooking,Mining", "sorted, gathering left out, shared Cooking added")
     eq(next(byId[171].crafters), nil, "nobody has Alchemy")
+    list = ns.Data.Tabs({ { id = 171, name = "Alchemy" }, { id = 2485, name = "Alchemy" } }, {})
+    eq(#list, 1, "same profession under two skill lines shows once")
     assert(byId[164].crafters["Dan Pal"], "Blacksmithing keeps its crafters")
 end)
 
