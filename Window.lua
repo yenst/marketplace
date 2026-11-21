@@ -19,6 +19,13 @@ local DETAIL_TOP = LIST_TOP + LIST_HEIGHT + 12
 local CRAFTER_HEIGHT, CRAFTER_ROWS = 30, 5
 local REAGENT_SLOTS, REAGENT_ROW = 8, 38
 local TAB_SIZE, MAX_TABS = 36, 12
+local STAT_WIDTH = 120
+local AUCTIONATOR_LOGO = "Interface\\AddOns\\Auctionator\\Images\\Logo"
+local STAT_ICONS = {
+    mats = "Interface\\Icons\\INV_Misc_Bag_10",
+    short = "Interface\\Icons\\INV_Misc_Note_01",
+    sells = "Interface\\Minimap\\Tracking\\Auctioneer",
+}
 
 local frame
 local state = { mode = "guild", prof = "all", query = "", onlineOnly = false, collapsed = {}, selected = nil, offset = 0, crafterOffset = 0 }
@@ -346,11 +353,37 @@ local function buildDetail()
     end
     frame.reagentLabel = label
 
-    -- Auctionator: mats cost, what's missing, sell price, shopping list.
-    frame.costLine = W.Text(left, 11, Theme.text)
-    frame.sellLine = W.Text(left, 11, Theme.muted)
-    frame.sellLine:SetPoint("TOPLEFT", frame.costLine, "BOTTOMLEFT", 0, -4)
-    frame.shop = W.Button(left, "Shopping list", 104, 20, function()
+    -- Auctionator: mats cost, what's missing and the sell price as small
+    -- tiles, plus a shopping list button with Auctionator's logo.
+    frame.stats = {}
+    for i, key in ipairs({ "mats", "short", "sells" }) do
+        local tile = W.Panel(left, { 0.04, 0.06, 0.08, 1 })
+        tile:SetSize(STAT_WIDTH, 34)
+        tile.icon = tile:CreateTexture(nil, "ARTWORK")
+        tile.icon:SetSize(24, 24)
+        tile.icon:SetPoint("LEFT", 5, 0)
+        tile.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+        tile.icon:SetTexture(STAT_ICONS[key])
+        tile.label = W.Text(tile, 10, Theme.muted)
+        tile.label:SetPoint("TOPLEFT", tile.icon, "TOPRIGHT", 7, 1)
+        tile.label:SetPoint("RIGHT", -4, 0)
+        tile.value = W.Text(tile, 12)
+        tile.value:SetPoint("BOTTOMLEFT", tile.icon, "BOTTOMRIGHT", 7, -1)
+        tile.value:SetPoint("RIGHT", -4, 0)
+        tile:EnableMouse(true)
+        W.Tooltip(tile, function(tooltip)
+            tooltip:AddLine(tile.tipTitle or "", 1, 1, 1)
+            if tile.tipText then
+                tooltip:AddLine(tile.tipText, 0.7, 0.7, 0.7, true)
+            end
+        end)
+        frame.stats[key] = tile
+        frame.stats[i] = tile
+    end
+    frame.shop = W.IconButton(left, 34, AUCTIONATOR_LOGO, "AH", function()
+        return "Auctionator shopping list",
+            "Adds the reagents you're missing, with exact names and amounts, as a list in Auctionator's Shopping tab. Searches them right away if the auction house is open."
+    end, function()
         local cost = frame.cost
         local meta = state.selected and ns.Scanner.Meta(state.selected)
         if not (cost and meta) then
@@ -360,11 +393,6 @@ local function buildDetail()
         if listName then
             ns.Print("Auctionator shopping list \"" .. listName .. "\" is ready: find it in the Shopping tab at the auction house.")
         end
-    end)
-    frame.shop:SetPoint("TOPRIGHT", left, "TOPRIGHT", 0, 0)
-    W.Tooltip(frame.shop, function(tooltip)
-        tooltip:AddLine("Auctionator shopping list", 1, 1, 1)
-        tooltip:AddLine("Adds the reagents you're missing, with exact names and amounts, as a list in Auctionator's Shopping tab. Searches them right away if the auction house is open.", 0.7, 0.7, 0.7, true)
     end)
 
     local divider = frame.browse:CreateTexture(nil, "ARTWORK")
@@ -619,31 +647,53 @@ function Window.DrawList()
     end
 end
 
+local function setStat(tile, label, value, title, text)
+    tile.label:SetText(label)
+    tile.value:SetText(value)
+    tile.tipTitle, tile.tipText = title, text
+end
+
 local function drawCosts(meta, reagents, cost)
     local ah = ns.AH.Available()
-    frame.costLine:SetShown(ah and #reagents > 0)
-    frame.sellLine:SetShown(ah)
+    for _, tile in ipairs(frame.stats) do
+        tile:SetShown(ah)
+    end
     frame.shop:SetShown(ah and #cost.missing > 0)
     if not ah then
         return
     end
     local rows = math.ceil(math.min(#reagents, REAGENT_SLOTS) / 2)
-    frame.costLine:ClearAllPoints()
-    frame.costLine:SetPoint("TOPLEFT", frame.reagentLabel, "BOTTOMLEFT", 0, -10 - rows * REAGENT_ROW)
-    frame.costLine:SetPoint("RIGHT", frame.detail, "RIGHT", -112, 0)
+    local top = -10 - rows * REAGENT_ROW
+    for i, tile in ipairs(frame.stats) do
+        tile:ClearAllPoints()
+        tile:SetPoint("TOPLEFT", frame.reagentLabel, "BOTTOMLEFT", (i - 1) * (STAT_WIDTH + 6), top)
+    end
     frame.shop:ClearAllPoints()
-    frame.shop:SetPoint("RIGHT", frame.detail, "RIGHT", 0, 0)
-    frame.shop:SetPoint("TOP", frame.costLine, "TOP", 0, 4)
+    frame.shop:SetPoint("LEFT", frame.stats.sells, "RIGHT", 6, 0)
 
-    local unknown = cost.unknown > 0 and Theme.Hex(Theme.muted) .. string.format(" (%d without a price)", cost.unknown) .. "|r" or ""
-    local short = #cost.missing > 0 and cost.missingTotal > 0
-        and string.format(" · you're short %s", ns.AH.Money(cost.missingTotal)) or ""
-    frame.costLine:SetText("Mats " .. ns.AH.Money(cost.total) .. short .. unknown)
+    local muted = Theme.Hex(Theme.muted)
+    local unpriced = cost.unknown > 0 and string.format("%d reagent%s without an auction price %s left out.", cost.unknown, cost.unknown == 1 and "" or "s", cost.unknown == 1 and "is" or "are") or nil
+    setStat(frame.stats.mats, "Mats cost", (#reagents > 0 and cost.total > 0) and (ns.AH.Money(cost.total) .. (cost.unknown > 0 and (muted .. " +?|r") or "")) or (muted .. "No price|r"),
+        "What the reagents cost", unpriced or "From Auctionator's last scan.")
+
+    if #cost.missing == 0 then
+        setStat(frame.stats.short, "You're short", Theme.Hex(Theme.online) .. "Nothing|r", "You have every reagent", "Counts your bags and bank.")
+    else
+        setStat(frame.stats.short, "You're short", cost.missingTotal > 0 and (Theme.Hex(Theme.bad) .. ns.AH.Money(cost.missingTotal) .. "|r") or (Theme.Hex(Theme.bad) .. ns.Plural(#cost.missing, "reagent") .. "|r"),
+            "What you still need to buy", "Counts your bags and bank. The button next to it makes an Auctionator shopping list of it.")
+    end
 
     local sell = meta.item and ns.AH.Price(meta.item)
     local age = meta.item and ns.AH.Age(meta.item)
-    local ageText = age and (age == 0 and " · seen today" or string.format(" · seen %dd ago", age)) or ""
-    frame.sellLine:SetText(sell and ("Sells for " .. ns.AH.Money(sell) .. ageText) or "No auction price for the crafted item yet")
+    local profit
+    if sell and cost.total > 0 and cost.unknown == 0 then
+        local diff = sell - cost.total
+        profit = (diff >= 0 and "Profit over the mats: " or "Loss against the mats: ") .. ns.AH.Money(math.abs(diff))
+    end
+    local seen = age and (age == 0 and "Seen at the auction house today." or string.format("Last seen at the auction house %d day%s ago.", age, age == 1 and "" or "s")) or nil
+    setStat(frame.stats.sells, age and (age == 0 and "Sells for · today" or string.format("Sells for · %dd ago", age)) or "Sells for",
+        sell and ns.AH.Money(sell) or (muted .. "No price|r"),
+        "Auction price of the crafted item", table.concat({ seen or "No auction price for it yet.", profit }, "\n"))
 end
 
 local function drawReagents(meta)

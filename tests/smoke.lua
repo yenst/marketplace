@@ -272,8 +272,10 @@ for _, tab in ipairs(win.tabs) do if tab.title == "Cooking" then tab.scripts.OnC
 -- Money shows with coin icons; spell them as letters for the asserts.
 local function plain(text) return (tostring(text):gsub("|TInterface\\MoneyFrame\\UI%-(%a)%a+Icon:[^|]*|t", function(c) return c:lower() end)) end
 assert(win.reagents[1].price.shown and plain(win.reagents[1].price.text) == "25s", "reagent price: " .. tostring(win.reagents[1].price.text))
-assert(plain(win.costLine.text):find("Mats 25s · you're short 25s"), "mats line: " .. tostring(win.costLine.text))
-assert(plain(win.sellLine.text) == "Sells for 4g · seen 2d ago", "sell line: " .. tostring(win.sellLine.text))
+assert(plain(win.stats.mats.value.text) == "25s", "mats tile: " .. tostring(win.stats.mats.value.text))
+assert(plain(win.stats.short.value.text):find("25s"), "short tile: " .. tostring(win.stats.short.value.text))
+assert(plain(win.stats.sells.value.text) == "4g" and win.stats.sells.label.text == "Sells for · 2d ago", "sells tile")
+assert(win.stats.sells.tipText:find("Profit over the mats: 3g 75s") or plain(win.stats.sells.tipText):find("Profit over the mats: 3g 75s"), "profit in tooltip: " .. plain(win.stats.sells.tipText))
 assert(win.shop.shown, "shopping list button when something's missing")
 win.shop.scripts.OnClick(win.shop)
 assert(lists["Marketplace: Spotted Yellowtail"] and lists["Marketplace: Spotted Yellowtail"][1]:find('^"Item 13754"'), "shopping list created")
