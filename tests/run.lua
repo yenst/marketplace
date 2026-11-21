@@ -296,7 +296,12 @@ test("AH without Auctionator does nothing", function()
     eq(ns.AH.Available(), false)
     eq(ns.AH.Price(123), nil)
     eq(ns.AH.ShoppingList("X", { { 1, 2 } }, function() return "Bar" end), nil)
-    eq(ns.AH.Money(123456), "12g 35s", "rounded to silver above 1g")
+    local plain = function(text) return (text:gsub("|TInterface\\MoneyFrame\\UI%-(%a)%a+Icon:[^|]*|t", function(c) return c:lower() end)) end
+    eq(plain(ns.AH.Money(123456)), "12g 35s", "rounded to silver above 1g")
+    eq(plain(ns.Coins(250)), "2s 50c")
+    eq(plain(ns.Coins(0)), "0c")
+    eq(plain(ns.Coins(10005)), "1g", "no copper next to gold")
+    assert(ns.Coins(10000):find("UI-GoldIcon", 1, true), "gold coin texture")
 end)
 
 test("Data.StatusText", function()

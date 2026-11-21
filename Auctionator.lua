@@ -101,17 +101,13 @@ function AH.ShoppingList(recipeName, missing, nameOf)
     return listName
 end
 
--- Copper as the game's coin string (with coin icons), or "12g 34s".
+-- Copper with coin icons, rounded to silver above 1g so it stays short.
 function AH.Money(copper)
     if not copper then
         return ""
     end
-    -- Round to silver above 1g, so the numbers stay short.
     if copper >= 10000 then
         copper = math.floor(copper / 100 + 0.5) * 100
     end
-    if GetCoinTextureString then
-        return GetCoinTextureString(copper)
-    end
-    return ns.FormatMoney(copper)
+    return ns.Coins(copper)
 end
