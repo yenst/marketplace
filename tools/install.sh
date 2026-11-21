@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Links this repo into every WoW Forever / Classic install it finds as
+# Links this repo into the WoW Forever install it finds as
 # Interface/AddOns/Marketplace, so edits show up in game after a /reload.
 # Pass --copy to copy the addon files instead (no tests/tools/.git).
 #   tools/install.sh [--copy] [WOW_DIR]
@@ -16,7 +16,7 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 wow="${1:-${WOW_DIR:-$HOME/Games/battlenet/drive_c/Program Files (x86)/World of Warcraft}}"
 installed=0
 
-for flavor in _forever_ _classic_beta_ _classic_era_; do
+for flavor in _forever_; do
     [[ -d "$wow/$flavor" ]] || continue
     addons="$wow/$flavor/Interface/AddOns"
     mkdir -p "$addons"
@@ -35,6 +35,6 @@ for flavor in _forever_ _classic_beta_ _classic_era_; do
 done
 
 if [[ $installed -eq 0 ]]; then
-    echo "No _forever_ / _classic_beta_ / _classic_era_ folder under: $wow" >&2
+    echo "No _forever_ folder under: $wow" >&2
     exit 1
 fi

@@ -1,4 +1,4 @@
-## Interface: 16001, 11509
+## Interface: 16001
 ## Title: |cff8c7cf5Marketplace|r
 ## Notes: Find who can craft it: browse your guild's professions, list your own crafts publicly with your fee and materials terms.
 ## Author: yenst
