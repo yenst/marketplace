@@ -10,14 +10,14 @@ local Theme, W, Data = ns.Theme, ns.W, ns.Data
 local Window = {}
 ns.Window = Window
 
-local WIDTH, HEIGHT = 760, 620
+local WIDTH, HEIGHT = 760, 680
 local PAD = 14
 local LIST_TOP = 132
 local ROW_HEIGHT, ROWS = 20, 12
 local LIST_HEIGHT = ROWS * ROW_HEIGHT + 6
 local DETAIL_TOP = LIST_TOP + LIST_HEIGHT + 12
 local CRAFTER_HEIGHT, CRAFTER_ROWS = 30, 5
-local REAGENT_SLOTS = 8
+local REAGENT_SLOTS, REAGENT_ROW = 8, 38
 local TAB_SIZE, MAX_TABS = 36, 12
 
 local frame
@@ -302,17 +302,18 @@ local function buildDetail()
     frame.reagents = {}
     for i = 1, REAGENT_SLOTS do
         local slot = W.Panel(left, { 0.04, 0.06, 0.08, 1 })
-        slot:SetSize(204, 30)
+        slot:SetSize(204, 34)
         local col, rowIndex = (i - 1) % 2, math.floor((i - 1) / 2)
-        slot:SetPoint("TOPLEFT", label, "BOTTOMLEFT", col * 212, -6 - rowIndex * 34)
-        slot.tile = iconTile(slot, 30)
+        slot:SetPoint("TOPLEFT", label, "BOTTOMLEFT", col * 212, -6 - rowIndex * REAGENT_ROW)
+        slot.tile = iconTile(slot, 34)
         slot.tile:SetPoint("LEFT")
         slot.count = W.Text(slot.tile, 10, Theme.text, "RIGHT")
         W.SetFont(slot.count, 10, "OUTLINE")
         slot.count:SetPoint("BOTTOMRIGHT", -1, 2)
         slot.name = W.Text(slot, 11)
-        slot.name:SetPoint("LEFT", slot.tile, "RIGHT", 8, 0)
         slot.name:SetPoint("RIGHT", -4, 0)
+        slot.price = W.Text(slot, 10, Theme.muted)
+        slot.price:SetPoint("BOTTOMLEFT", slot.tile, "BOTTOMRIGHT", 8, 4)
         slot:EnableMouse(true)
         slot:SetScript("OnEnter", function(self)
             if self.itemID then
@@ -324,6 +325,28 @@ local function buildDetail()
         slot:SetScript("OnLeave", function() GameTooltip:Hide() end)
         frame.reagents[i] = slot
     end
+    frame.reagentLabel = label
+
+    -- Auctionator: mats cost, what's missing, sell price, shopping list.
+    frame.costLine = W.Text(left, 11, Theme.text)
+    frame.sellLine = W.Text(left, 11, Theme.muted)
+    frame.sellLine:SetPoint("TOPLEFT", frame.costLine, "BOTTOMLEFT", 0, -4)
+    frame.shop = W.Button(left, "Shopping list", 104, 20, function()
+        local cost = frame.cost
+        local meta = state.selected and ns.Scanner.Meta(state.selected)
+        if not (cost and meta) then
+            return
+        end
+        local listName = ns.AH.ShoppingList(meta.name or "recipe", cost.missing, itemName)
+        if listName then
+            ns.Print("Auctionator shopping list \"" .. listName .. "\" is ready: find it in the Shopping tab at the auction house.")
+        end
+    end)
+    frame.shop:SetPoint("TOPRIGHT", left, "TOPRIGHT", 0, 0)
+    W.Tooltip(frame.shop, function(tooltip)
+        tooltip:AddLine("Auctionator shopping list", 1, 1, 1)
+        tooltip:AddLine("Adds the reagents you're missing, with exact names and amounts, as a list in Auctionator's Shopping tab. Searches them right away if the auction house is open.", 0.7, 0.7, 0.7, true)
+    end)
 
     local divider = frame:CreateTexture(nil, "ARTWORK")
     divider:SetColorTexture(unpack(Theme.hairline))
@@ -537,21 +560,62 @@ function Window.DrawList()
     end
 end
 
+local function drawCosts(meta, reagents, cost)
+    local ah = ns.AH.Available()
+    frame.costLine:SetShown(ah and #reagents > 0)
+    frame.sellLine:SetShown(ah)
+    frame.shop:SetShown(ah and #cost.missing > 0)
+    if not ah then
+        return
+    end
+    local rows = math.ceil(math.min(#reagents, REAGENT_SLOTS) / 2)
+    frame.costLine:ClearAllPoints()
+    frame.costLine:SetPoint("TOPLEFT", frame.reagentLabel, "BOTTOMLEFT", 0, -10 - rows * REAGENT_ROW)
+    frame.costLine:SetPoint("RIGHT", frame.detail, "RIGHT", -112, 0)
+    frame.shop:ClearAllPoints()
+    frame.shop:SetPoint("RIGHT", frame.detail, "RIGHT", 0, 0)
+    frame.shop:SetPoint("TOP", frame.costLine, "TOP", 0, 4)
+
+    local unknown = cost.unknown > 0 and Theme.Hex(Theme.muted) .. string.format(" (%d without a price)", cost.unknown) .. "|r" or ""
+    local short = #cost.missing > 0 and cost.missingTotal > 0
+        and string.format(" · you're short %s", ns.AH.Money(cost.missingTotal)) or ""
+    frame.costLine:SetText("Mats " .. ns.AH.Money(cost.total) .. short .. unknown)
+
+    local sell = meta.item and ns.AH.Price(meta.item)
+    local age = meta.item and ns.AH.Age(meta.item)
+    local ageText = age and (age == 0 and " · seen today" or string.format(" · seen %dd ago", age)) or ""
+    frame.sellLine:SetText(sell and ("Sells for " .. ns.AH.Money(sell) .. ageText) or "No auction price for the crafted item yet")
+end
+
 local function drawReagents(meta)
     local reagents = meta and meta.reagents or {}
+    local cost = ns.AH.Costs(reagents, ns.AH.Price, itemCount)
+    frame.cost = cost
     for i, slot in ipairs(frame.reagents) do
         local r = reagents[i]
         slot:SetShown(r ~= nil)
         if r then
             local id, need = r[1], r[2]
             local have = itemCount(id)
+            local line = cost.lines[i]
             slot.itemID = id
             slot.tile.icon:SetTexture(itemIcon(id))
             slot.count:SetText(have .. "/" .. need)
             slot.count:SetTextColor(unpack(have >= need and Theme.text or Theme.bad))
             slot.name:SetText(itemName(id) or "…")
+            slot.name:ClearAllPoints()
+            slot.name:SetPoint("RIGHT", -4, 0)
+            if line and line.cost then
+                slot.name:SetPoint("TOPLEFT", slot.tile, "TOPRIGHT", 8, -4)
+                slot.price:SetText(ns.AH.Money(line.cost))
+                slot.price:Show()
+            else
+                slot.name:SetPoint("LEFT", slot.tile, "RIGHT", 8, 0)
+                slot.price:Hide()
+            end
         end
     end
+    drawCosts(meta or {}, reagents, cost)
 end
 
 function Window.DrawDetail()

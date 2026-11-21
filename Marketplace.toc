@@ -7,7 +7,7 @@
 ## X-Website: https://github.com/yenst/marketplace
 ## IconTexture: Interface\Icons\INV_Misc_Coin_01
 ## SavedVariables: MarketplaceDB
-## OptionalDeps: EllesmereUI, LibDataBroker-1.1, LibDBIcon-1.0
+## OptionalDeps: Auctionator, EllesmereUI, LibDataBroker-1.1, LibDBIcon-1.0
 
 embeds.xml
 
@@ -15,6 +15,7 @@ Init.lua
 Scanner.lua
 Sync.lua
 Data.lua
+Auctionator.lua
 Theme.lua
 Widgets.lua
 Window.lua

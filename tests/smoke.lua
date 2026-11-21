@@ -257,6 +257,26 @@ assert(win.crafters[1].name.text == "Dan", "Dan listed as crafter")
 win.crafters[1].whisper.scripts.OnClick(win.crafters[1].whisper)
 assert(told == "Dan" and inserted:find("Henchant:18238"), "whisper opens a tell with the recipe link")
 
+-- Auctionator: reagent prices, mats total, sell price, shopping list.
+local lists = {}
+Auctionator = { API = { v1 = {
+    GetVendorPriceByItemID = function() return nil end,
+    GetAuctionPriceByItemID = function(_, id) return id == 13754 and 2500 or (id == 13927 and 40000 or nil) end,
+    GetAuctionAgeByItemID = function() return 2 end,
+    ConvertToSearchString = function(_, term) return '"' .. term.searchString .. '";;;;;;;;;;;;;;;' .. (term.quantity or "") end,
+    CreateShoppingList = function(_, name, strings) lists[name] = strings end,
+} } }
+C_Item.GetItemCount = function() return 0 end
+win.crafters[1].whisper.scripts.OnClick(win.crafters[1].whisper) -- any redraw
+for _, tab in ipairs(win.tabs) do if tab.title == "Cooking" then tab.scripts.OnClick(tab) end end
+assert(win.reagents[1].price.shown and win.reagents[1].price.text == "25s", "reagent price: " .. tostring(win.reagents[1].price.text))
+assert(win.costLine.text:find("Mats 25s · you're short 25s"), "mats line: " .. tostring(win.costLine.text))
+assert(win.sellLine.text == "Sells for 4g · seen 2d ago", "sell line: " .. tostring(win.sellLine.text))
+assert(win.shop.shown, "shopping list button when something's missing")
+win.shop.scripts.OnClick(win.shop)
+assert(lists["Marketplace: Spotted Yellowtail"] and lists["Marketplace: Spotted Yellowtail"][1]:find('^"Item 13754"'), "shopping list created")
+C_Item.GetItemCount = function() return 1 end
+
 -- Collapse the header, then search across everything.
 win.rows[1].scripts.OnClick(win.rows[1])
 rows = visibleRows()

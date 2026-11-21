@@ -3,7 +3,7 @@
 date, time = os.date, os.time
 
 local ns = {}
-for _, file in ipairs({ "Init", "Scanner", "Sync", "Data" }) do
+for _, file in ipairs({ "Init", "Scanner", "Sync", "Data", "Auctionator" }) do
     assert(loadfile(file .. ".lua"))("Marketplace", ns)
 end
 
@@ -276,6 +276,27 @@ test("Data.Tabs lists every crafting profession, shared or not", function()
     list = ns.Data.Tabs({ { id = 171, name = "Alchemy" }, { id = 2485, name = "Alchemy" } }, {})
     eq(#list, 1, "same profession under two skill lines shows once")
     assert(byId[164].crafters["Dan Pal"], "Blacksmithing keeps its crafters")
+end)
+
+test("AH.Costs totals reagents and what you're missing", function()
+    local prices = { [1] = 500, [2] = 10000 } -- 5s and 1g; item 3 has no price
+    local have = { [1] = 20, [2] = 1, [3] = 0 }
+    local c = ns.AH.Costs({ { 1, 16 }, { 2, 6 }, { 3, 4 } }, function(id) return prices[id] end, function(id) return have[id] end)
+    eq(c.total, 16 * 500 + 6 * 10000)
+    eq(c.missingTotal, 5 * 10000, "only the 5 Gold Bars you lack")
+    eq(c.unknown, 1)
+    eq(#c.missing, 2, "short on items 2 and 3")
+    eq(c.missing[1][1], 2)
+    eq(c.missing[1][2], 5)
+    eq(c.lines[1].missing, 0)
+    eq(c.lines[3].cost, nil, "no price, no cost")
+end)
+
+test("AH without Auctionator does nothing", function()
+    eq(ns.AH.Available(), false)
+    eq(ns.AH.Price(123), nil)
+    eq(ns.AH.ShoppingList("X", { { 1, 2 } }, function() return "Bar" end), nil)
+    eq(ns.AH.Money(123456), "12g 35s", "rounded to silver above 1g")
 end)
 
 test("Data.StatusText", function()
