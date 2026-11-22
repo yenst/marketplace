@@ -2,6 +2,7 @@
 
 ## 0.1.2-beta (unreleased)
 
+- Track recipe checkbox in the recipe details, like the profession window's: its reagents go to your objective tracker.
 - Pattern tooltips (bags, vendors, auction house, links) show who in your guild knows the recipe, who has the skill to learn it, and who has the profession but needs more skill.
 
 ## 0.1.1-beta

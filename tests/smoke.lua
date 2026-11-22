@@ -527,6 +527,17 @@ assert(win.member.text.text == "Dan", "crafter name filters")
 win.member.scripts.OnClick(win.member)
 win.memberMenu.rows[1].scripts.OnClick(win.memberMenu.rows[1])
 
+-- Track recipe, through the profession API.
+local tracked = {}
+C_TradeSkillUI.IsRecipeTracked = function(id) return tracked[id] or false end
+C_TradeSkillUI.SetRecipeTracked = function(id, on) tracked[id] = on end
+for _, tab in ipairs(win.tabs) do if tab.title == "Cooking" then tab.scripts.OnClick(tab) end end
+assert(win.track.shown, "track recipe checkbox")
+win.track.scripts.OnClick(win.track)
+assert(tracked[18238] == true, "tracked Spotted Yellowtail")
+win.track.scripts.OnClick(win.track)
+assert(tracked[18238] == false, "untracked")
+
 -- Modified clicks: the crafted item (shift links, ctrl previews), its
 -- reagents, and the recipe pattern.
 local clicked, dressed = {}, {}

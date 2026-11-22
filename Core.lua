@@ -157,6 +157,10 @@ function handlers.GUILD_ROSTER_UPDATE()
 end
 
 -- Quest titles (recipe sources) load on demand.
+function handlers.TRACKED_RECIPE_UPDATE()
+    ns.Window.TrackingChanged()
+end
+
 function handlers.QUEST_DATA_LOAD_RESULT()
     ns.Window.ItemDataArrived()
 end

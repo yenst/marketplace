@@ -592,6 +592,20 @@ local function buildDetail()
     end
     frame.reagentLabel = label
 
+    -- Track Recipe, as in the profession window: its reagents go to the
+    -- objective tracker.
+    frame.track = W.Toggle(left, "Track recipe", function()
+        local T = C_TradeSkillUI
+        return state.selected and T and T.IsRecipeTracked and T.IsRecipeTracked(state.selected, false) or false
+    end, function(on)
+        local T = C_TradeSkillUI
+        if state.selected and T and T.SetRecipeTracked then
+            T.SetRecipeTracked(state.selected, on, false)
+        end
+    end)
+    frame.track:SetWidth(140)
+    frame.track:SetPoint("BOTTOMLEFT", 0, 4)
+
     -- Auctionator: mats cost, what's missing and the sell price as small
     -- tiles, plus a shopping list button with Auctionator's logo.
     frame.stats = {}
@@ -1050,6 +1064,9 @@ function Window.DrawDetail()
     frame.selName:SetText(Theme.QualityHex(quality or 1) .. (meta.name or ("Recipe " .. recipe.id)) .. "|r")
     frame.selSub:SetText(recipe.profName .. (recipe.catName ~= "Other" and (" · " .. recipe.catName) or ""))
     drawReagents(meta)
+    local T = C_TradeSkillUI
+    frame.track:SetShown(T and T.SetRecipeTracked and T.IsRecipeTracked and true or false)
+    frame.track:Update()
 
     local list = recipe.crafters
     state.crafterOffset = math.max(0, math.min(state.crafterOffset, math.max(0, #list - CRAFTER_ROWS)))
@@ -1171,6 +1188,13 @@ function Window.Refresh()
     Window.DrawDetail()
     drawFooter()
     Window.DrawMemberMenu()
+end
+
+-- Tracking changed elsewhere (the profession window, the tracker).
+function Window.TrackingChanged()
+    if frame and frame:IsShown() and frame.track then
+        frame.track:Update()
+    end
 end
 
 -- Item names and icons load lazily; redraw once a burst of them arrived.
