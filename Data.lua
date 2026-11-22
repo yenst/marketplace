@@ -244,7 +244,7 @@ function Data.StatusText(crafter, now)
     elseif crafter.state == "addon" then
         return "Online"
     elseif crafter.state == "noaddon" then
-        return "Online · Marketplace not running"
+        return "Online"
     end
     local ago = crafter.lastOnline
     if not ago and crafter.updated and now then

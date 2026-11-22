@@ -157,16 +157,19 @@ local function sentTo(target, pattern)
 end
 
 ns.Sync.Announce(true)
-assert(out[#out].channel == "GUILD" and out[#out].text:find("^H:1:%x+:%x+$"), "login hello goes to the guild")
+assert(out[1].channel == "GUILD" and out[1].text:find("^H:1:%x+:%x+$"), "login hello goes to the guild")
+assert(out[#out].channel == "GUILD" and out[#out].text == "Y:1", "followed by our (empty) index")
+local hello = out[1].text
 -- Forever: messages come from "Tester Joel" though UnitName says "Tester".
 -- Our own hello echoes back from the guild and teaches us that name.
 MarketplaceDB.guilds["Test Guild"] = { ["Tester Joel"] = { hash = "x", professions = {} } }
-addon(out[#out].text, "GUILD", "Tester Joel")
+addon(hello, "GUILD", "Tester Joel")
 assert(ns.Sync.selfName == "Tester Joel", "own name learned from the echo")
 assert(MarketplaceDB.guilds["Test Guild"]["Tester Joel"] == nil, "a stored copy of ourselves is dropped")
 out = {}
 addon("H:1:abcd1234", "WHISPER", "Tester Joel")
 addon("R:1", "WHISPER", "Tester Joel")
+addon("Y:1", "GUILD", "Tester Joel")
 assert(#out == 0, "messages from our own name are ignored")
 
 local dan = { [185] = { id = 185, name = "Cooking", skill = 150, maxSkill = 150, scannedAt = 1, recipes = { [18238] = 2489 }, categories = { [2489] = { name = "Fish", parent = 0 } } } }
@@ -174,7 +177,7 @@ local danLines, danHash = ns.Sync.Encode(dan)
 out = {}
 addon("H:1:" .. danHash, "GUILD", "Dan-Mirage")
 assert(sentTo("Dan-Mirage", "^R:1$"), "unknown hash: ask Dan for his recipes")
-assert(sentTo("Dan-Mirage", "^H:1:"), "and tell Dan what we have")
+assert(not sentTo("Dan-Mirage", "^H:"), "nobody answers a hello with another hello")
 assert(ns.Sync.seen["Dan-Mirage"], "Dan counts as running the addon")
 for _, line in ipairs(danLines) do addon(line, "WHISPER", "Dan-Mirage") end
 local stored = MarketplaceDB.guilds["Test Guild"]["Dan-Mirage"]
@@ -183,52 +186,74 @@ assert(stored and stored.hash == danHash and stored.professions[185].recipes[182
 out = {}
 addon("H:1:" .. danHash, "WHISPER", "Dan-Mirage")
 assert(not sentTo("Dan-Mirage", "^R:1$"), "known hash: no new request")
-assert(sentTo("Dan-Mirage", "^X:1:Dan%-Mirage=" .. danHash .. "=1$") and sentTo("Dan-Mirage", "^Y:1:1$"),
-    "Dan answered our hello: send him our index and ask for his")
 
--- Dan holds Eve's recipes; Eve is offline. Dan relays them.
+-- Dan logs in holding Eve's recipes (Eve is offline) and an old copy of ours.
 local eve = { [197] = { id = 197, name = "Tailoring", skill = 75, maxSkill = 150, scannedAt = 50, recipes = { [2330] = 0 }, categories = {} } }
 local eveLines, eveHash = ns.Sync.Encode(eve, "Eve-Mirage")
 out = {}
-addon("X:1:Dan-Mirage=" .. danHash .. "=1,Eve-Mirage=" .. eveHash .. "=50,Tester Joel=abcdef01=99", "WHISPER", "Dan-Mirage")
-addon("Y:1:0", "WHISPER", "Dan-Mirage")
-assert(sentTo("Dan-Mirage", "^R:1:Eve%-Mirage$"), "ask Dan for Eve's recipes")
-assert(not sentTo("Dan-Mirage", "^R:1:Tester") and not sentTo("Dan-Mirage", "^R:1:Dan"), "not for ours or Dan's own")
-assert(not sentTo("Dan-Mirage", "^Y:"), "Dan didn't ask for our index back")
+addon("X:1:Eve-Mirage=" .. eveHash .. "=50,Tester Joel=abcdef01=1", "GUILD", "Dan-Mirage")
+addon("Y:1", "GUILD", "Dan-Mirage")
+assert(sentTo("Dan-Mirage", "^B:1:%x+$"), "Dan's copy of us is old: we send ours")
+assert(sentTo("Dan-Mirage", "^R:1:Eve%-Mirage$"), "Dan has Eve and we don't: ask him")
+assert(not sentTo("Dan-Mirage", "^R:1:Tester"), "never ask for ourselves")
 for _, line in ipairs(eveLines) do addon(line, "WHISPER", "Dan-Mirage") end
 local eveStored = MarketplaceDB.guilds["Test Guild"]["Eve-Mirage"]
 assert(eveStored and eveStored.via == "Dan-Mirage" and eveStored.professions[197].recipes[2330], "Eve's recipes stored via Dan")
 assert(MarketplaceDB.guilds["Test Guild"]["Dan-Mirage"].hash == danHash, "Dan's own entry untouched")
 
--- An older relayed copy doesn't replace a newer one.
+-- Dan logs in again, now up to date: nobody needs to say anything.
+out = {}
+addon("X:1:Eve-Mirage=" .. eveHash .. "=50,Tester Joel=" .. ns.Sync.MyHash() .. "=99", "GUILD", "Dan-Mirage")
+addon("Y:1", "GUILD", "Dan-Mirage")
+assert(#out == 0, "an up-to-date newcomer gets no traffic")
+
+-- Older relayed copies and copies of ourselves are ignored.
 local oldEve = { [197] = { id = 197, name = "Tailoring", skill = 1, maxSkill = 75, scannedAt = 10, recipes = { [2329] = 0 }, categories = {} } }
 for _, line in ipairs((ns.Sync.Encode(oldEve, "Eve-Mirage"))) do addon(line, "WHISPER", "Fenna-Mirage") end
 assert(MarketplaceDB.guilds["Test Guild"]["Eve-Mirage"].hash == eveHash, "older copy ignored")
--- A relayed copy of ourselves is ignored.
 for _, line in ipairs((ns.Sync.Encode(oldEve, "Tester Joel"))) do addon(line, "WHISPER", "Fenna-Mirage") end
 assert(not MarketplaceDB.guilds["Test Guild"]["Tester Joel"], "no relayed copy of ourselves")
 
--- We pass Eve's recipes on to someone who asks.
+-- Hana logs in with nothing. We offer Eve on GUILD (Dan is online and sends
+-- his own), and she asks us for it.
 out = {}
-addon("R:1:Eve-Mirage", "WHISPER", "Fenna-Mirage")
-local relayDecoder, relayed, _, relayOwner = ns.Sync.NewDecoder()
+addon("Y:1", "GUILD", "Hana-Mirage")
+local offer
+for _, m in ipairs(out) do if m.text:find("^O:") then offer = m end end
+assert(offer and offer.channel == "GUILD" and offer.text == "O:1:Hana-Mirage:Eve-Mirage=" .. eveHash .. "=50", "relay offer for Eve")
+assert(sentTo("Hana-Mirage", "^B:1:%x+$"), "and our own recipes, as the owner")
+out = {}
+addon("R:1:Eve-Mirage", "WHISPER", "Hana-Mirage")
+local relayDecoder, relayed, relayOwner = ns.Sync.NewDecoder()
 for _, m in ipairs(out) do
-    local p, h, o = relayDecoder.Feed(m.text)
+    local p, _, o = relayDecoder.Feed(m.text)
     if p then relayed, relayOwner = p, o end
 end
 assert(relayed and relayed[197] and relayOwner == "Eve-Mirage", "we relay Eve's recipes")
 out = {}
-addon("R:1:Nobody", "WHISPER", "Fenna-Mirage")
+addon("R:1:Nobody", "WHISPER", "Hana-Mirage")
 assert(#out == 0, "nothing to relay for unknown people")
+
+-- Ivy logs in; Gus offers Eve before our random wait is over: we stay quiet.
+local timers = {}
+C_Timer.After = function(_, fn) timers[#timers + 1] = fn end
 out = {}
-addon("X:1:Eve-Mirage=" .. eveHash .. "=50", "WHISPER", "Fenna-Mirage")
-addon("Y:1:1", "WHISPER", "Fenna-Mirage")
-assert(sentTo("Fenna-Mirage", "Eve%-Mirage=") and sentTo("Fenna-Mirage", "^Y:1:0$"), "index sent back when asked")
-assert(not sentTo("Fenna-Mirage", "^R:"), "same copy: nothing to ask for")
+addon("Y:1", "GUILD", "Ivy-Mirage")
+addon("O:1:Ivy-Mirage:Eve-Mirage=" .. eveHash .. "=50", "GUILD", "Gus-Mirage")
+for _, fn in ipairs(timers) do fn() end
+C_Timer.After = function(_, fn) fn() end
+for _, m in ipairs(out) do assert(not m.text:find("^O:"), "someone else offered first: no offer from us") end
+
+-- Offers made to us: take what's new, skip what we have.
 out = {}
-addon("X:1:Dan-Mirage=ffffffff=999", "WHISPER", "Fenna-Mirage")
-addon("Y:1:0", "WHISPER", "Fenna-Mirage")
-assert(not sentTo("Fenna-Mirage", "^R:1:Dan"), "Dan is online with the addon: get his recipes from him, not a relay")
+addon("O:1:Tester Joel:Eve-Mirage=" .. eveHash .. "=50,Kim-Mirage=1234abcd=5", "GUILD", "Gus-Mirage")
+assert(sentTo("Gus-Mirage", "^R:1:Kim%-Mirage$") and not sentTo("Gus-Mirage", "Eve"), "ask Gus only for Kim")
+out = {}
+addon("O:1:Tester Joel:Kim-Mirage=1234abcd=5", "GUILD", "Lou-Mirage")
+assert(#out == 0, "already asked Gus for that copy")
+out = {}
+addon("O:1:Tester Joel:Dan-Mirage=ffffffff=999", "GUILD", "Lou-Mirage")
+assert(#out == 0, "Dan is online with the addon: his recipes come from him, not a relay")
 
 out = {}
 addon("R:1", "WHISPER", "Dan-Mirage")
