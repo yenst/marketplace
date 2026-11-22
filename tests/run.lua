@@ -463,6 +463,24 @@ test("Data.Index adds catalog recipes nobody has", function()
     end
 end)
 
+test("Scanner.QuietScan finds learned recipes without the window", function()
+    local T = {
+        GetRecipeInfo = function(id) return { learned = id == 2660 or id == 2663, categoryID = id == 2660 and 50 or 0 } end,
+        GetCategoryInfo = function(id) return id == 50 and { name = "Materials", parentCategoryID = 0 } or nil end,
+    }
+    local catalog = { [164] = { [2660] = {}, [2663] = {}, [16745] = {} }, [999] = { [1] = {} } }
+    local char = { professions = { [164] = { id = 164, recipes = { [12260] = 7 }, categories = { [7] = { name = "Armor" } } } } }
+    local infos = { [164] = { name = "Blacksmithing", skill = 40, maxSkill = 75 }, [333] = { name = "Enchanting", skill = 1, maxSkill = 75 } }
+    assert(ns.Scanner.QuietScan(char, infos, T, catalog, 123), "changed")
+    local p = char.professions[164]
+    eq(p.recipes[2660], 50); eq(p.recipes[2663], 0); eq(p.recipes[16745], nil)
+    eq(p.recipes[12260], 7, "window-scanned recipes are kept")
+    eq(p.categories[50].name, "Materials")
+    eq(p.skill, 40); eq(p.scannedAt, 123)
+    eq(char.professions[333], nil, "no catalog: nothing to look up")
+    assert(not ns.Scanner.QuietScan(char, infos, T, catalog, 124), "second run: nothing new")
+end)
+
 test("Data.Coverage counts patterns the guild knows", function()
     local recipes = {
         [1] = { prof = 164, crafters = { {} } },

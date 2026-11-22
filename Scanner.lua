@@ -161,20 +161,33 @@ function Scanner.CatalogMeta(id)
     return meta
 end
 
--- The profession skill lines this character has now, or nil if the client
--- can't say.
-local function learnedProfessions()
+-- This character's professions from the spellbook side (no window needed):
+-- { [skillLine] = { name, skill, maxSkill } }, or nil if the client can't say.
+local function professionInfos()
     if not (GetProfessions and GetProfessionInfo) then
         return nil
     end
-    local set, any = {}, false
+    local out = {}
     for _, index in pairs({ GetProfessions() }) do
-        local skillLine = index and select(7, GetProfessionInfo(index))
+        local name, _, skill, maxSkill, _, _, skillLine = GetProfessionInfo(index)
         if skillLine then
-            set[skillLine], any = true, true
+            out[skillLine] = { name = name, skill = skill or 0, maxSkill = maxSkill or 0 }
         end
     end
-    return any and set or nil
+    return next(out) and out or nil
+end
+Scanner.ProfessionInfos = professionInfos
+
+local function learnedProfessions()
+    local infos = professionInfos()
+    if not infos then
+        return nil
+    end
+    local set = {}
+    for id in pairs(infos) do
+        set[id] = true
+    end
+    return set
 end
 
 -- Forgets professions this character has since unlearned, so they stop
@@ -199,6 +212,84 @@ function Scanner.DropUnlearned(char, learned)
             char.professions[id] = nil
         end
     end
+end
+
+-- Without the profession window: for each profession the character has,
+-- asks the client which catalog recipes are learned (Forever answers
+-- GetRecipeInfo(id).learned with the window closed). Adds what it finds to
+-- the character's records, never removes (a window scan is the full
+-- truth, and can include recipes the catalog lacks). Category names come
+-- along when the client gives them, else the recipe sits under "Other"
+-- until someone opens that profession. Returns whether anything changed.
+--   infos = Scanner.ProfessionInfos(), T = C_TradeSkillUI, catalog = ns.RecipeDB
+function Scanner.QuietScan(char, infos, T, catalog, now)
+    if not (char and infos and T and T.GetRecipeInfo and catalog) then
+        return false
+    end
+    char.professions = char.professions or {}
+    local changed = false
+    for id, info in pairs(infos) do
+        local entries = catalog[id]
+        if entries then
+            local p = char.professions[id]
+            if not p then
+                p = { id = id, name = info.name, skill = 0, maxSkill = 0, recipes = {}, categories = {} }
+                char.professions[id] = p
+            end
+            if p.skill ~= info.skill or p.maxSkill ~= info.maxSkill then
+                p.skill, p.maxSkill = info.skill, info.maxSkill
+                changed = true
+            end
+            local found = false
+            for recipeID in pairs(entries) do
+                if not p.recipes[recipeID] then
+                    local r = T.GetRecipeInfo(recipeID)
+                    if r and r.learned then
+                        local cat = r.categoryID or 0
+                        p.recipes[recipeID] = cat
+                        found = true
+                        while cat and cat ~= 0 and not p.categories[cat] and T.GetCategoryInfo do
+                            local c = T.GetCategoryInfo(cat)
+                            if not (c and c.name) then
+                                break
+                            end
+                            p.categories[cat] = { name = c.name, parent = c.parentCategoryID }
+                            cat = c.parentCategoryID
+                        end
+                    end
+                end
+            end
+            if found then
+                p.scannedAt = now
+                changed = true
+            end
+        end
+    end
+    return changed
+end
+
+-- Quiet scan now, sharing what changed (after logging in, learning a
+-- recipe or a skill change); bursts of events run it once.
+local quietPending = false
+function Scanner.QuietQueue(delay)
+    if quietPending then
+        return
+    end
+    quietPending = true
+    C_Timer.After(delay or 2, function()
+        quietPending = false
+        if not ns.char then
+            return
+        end
+        Scanner.DropUnlearned(ns.char)
+        if Scanner.QuietScan(ns.char, professionInfos(), C_TradeSkillUI, ns.RecipeDB, time()) then
+            if ns.db.settings.debug then
+                ns.Print("found learned recipes without the profession window")
+            end
+            ns.Refresh()
+            ns.Sync.Announce()
+        end
+    end)
 end
 
 -- Number of learned recipes in a profession record.

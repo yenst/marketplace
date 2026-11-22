@@ -121,7 +121,7 @@ function handlers.PLAYER_LOGIN()
     C_Timer.After(10, function()
         helloReady = true
         ns.Sync.EnsureHello()
-        ns.Scanner.DropUnlearned(ns.char)
+        ns.Scanner.QuietQueue(0) -- share professions without opening their windows
     end)
 end
 
@@ -164,6 +164,14 @@ end
 function handlers.GET_ITEM_INFO_RECEIVED()
     ns.Window.ItemDataArrived()
 end
+
+-- A recipe or skill learned: pick it up without the profession window.
+function handlers.NEW_RECIPE_LEARNED()
+    if helloReady then
+        ns.Scanner.QuietQueue()
+    end
+end
+handlers.SKILL_LINES_CHANGED = handlers.NEW_RECIPE_LEARNED
 
 handlers.TRADE_SKILL_SHOW = function() ns.Scanner.Queue() end
 handlers.TRADE_SKILL_LIST_UPDATE = handlers.TRADE_SKILL_SHOW

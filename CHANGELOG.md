@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.1-beta (unreleased)
+
+- Your professions are shared at login and when you learn a recipe, without opening the profession windows first. (Opening a window still adds its category grouping.)
+
+## 0.1.0-beta
 
 - Guild browser laid out like the profession window: profession tabs, categories in game order, reagents, crafters online first, whisper with the recipe link.
 - Guild sync over hidden addon messages.
