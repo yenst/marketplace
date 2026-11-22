@@ -727,25 +727,12 @@ local function buildDetail()
     frame.source = source
 end
 
--- "[right mouse] favorite" with the game's mouse button icon (words if
--- the client lacks it). Linking and previewing work as anywhere else.
-local function mouseHint()
-    local right = "newplayertutorial-icon-mouse-rightbutton"
-    if C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(right) then
-        return "|A:" .. right .. ":16:12|a favorite"
-    end
-    return "Right-click to favorite"
-end
-
 local function buildFooter()
     local line = W.Line(frame.browse, Theme.border)
     line:SetPoint("BOTTOMLEFT", 0, 26)
     line:SetPoint("BOTTOMRIGHT", 0, 26)
     frame.footer = W.Text(frame.browse, 11, Theme.muted)
     frame.footer:SetPoint("BOTTOMLEFT", 12, 8)
-    local hint = W.Text(frame.browse, 11, Theme.muted, "RIGHT")
-    hint:SetPoint("BOTTOMRIGHT", -12, 8)
-    hint:SetText(mouseHint())
 end
 
 local function buildTabs()
