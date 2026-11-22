@@ -20,5 +20,6 @@ Auctionator.lua
 Theme.lua
 Widgets.lua
 Window.lua
+GuildTab.lua
 Probe.lua
 Core.lua

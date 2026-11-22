@@ -456,4 +456,17 @@ win.favorite.scripts.OnClick(win.favorite)
 assert(not MarketplaceDB.favorites[18238], "star in the details removes it again")
 assert(visibleRows()[1].label == "Fish", "back in its category")
 
+-- The Guild & Communities window (loaded on demand) gets a Marketplace tab.
+CommunitiesFrame = CreateFrame("Frame", "CommunitiesFrame")
+CommunitiesFrame.GuildInfoTab = CreateFrame("CheckButton")
+for _, f in ipairs(allFrames) do
+    if rawget(f, "events") and f.events.ADDON_LOADED and f ~= eventFrame then
+        f.scripts.OnEvent(f, "ADDON_LOADED", "Blizzard_Communities")
+    end
+end
+assert(ns.guildTab and ns.guildTab.shown, "guild window tab")
+win:Hide()
+ns.guildTab.scripts.OnClick(ns.guildTab)
+assert(win.shown, "the tab opens Marketplace")
+
 print("smoke test passed")

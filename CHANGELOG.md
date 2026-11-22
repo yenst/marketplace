@@ -9,4 +9,5 @@
 - Auctionator integration: reagent prices, mats cost, sell price, shopping lists.
 - Money shown with gold, silver and copper coin icons.
 - Favorite recipes, listed at the top.
+- Marketplace tab on the Guild & Communities window.
 - Every recipe of every profession, including ones nobody in the guild has, with where to learn it (trainer, vendor zones, quests, drops, reputation). Data from WhatsTraining (MIT).

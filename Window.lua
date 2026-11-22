@@ -915,6 +915,16 @@ function Window.ItemDataArrived()
     end)
 end
 
+function Window.Show()
+    if not frame then
+        build()
+    end
+    frame:Show()
+    if frame.Raise then
+        frame:Raise()
+    end
+end
+
 function Window.Toggle()
     if not frame then
         build()
