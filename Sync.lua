@@ -314,11 +314,12 @@ local handlers = {}
 
 -- Index exchanges we started this session (we're the one catching up).
 local MAX_EXCHANGES = 2
-local exchanges, exchanged = 0, {}
+local exchanges, exchanged, candidates, exchangeScheduled = 0, {}, {}, false
 local incoming = {}   -- sender -> index being received
 local requested = {}  -- owner -> hash we already asked someone for
 
--- Short names of everyone in the guild, or nil before the roster loads.
+-- Everyone in the guild by short name (value: online or not), or nil
+-- before the roster loads.
 local function members()
     local n = GetNumGuildMembers and GetNumGuildMembers() or 0
     if n == 0 then
@@ -326,9 +327,9 @@ local function members()
     end
     local set = {}
     for i = 1, n do
-        local name = GetGuildRosterInfo(i)
+        local name, _, _, _, _, _, _, _, isOnline = GetGuildRosterInfo(i)
         if name then
-            set[shortName(name)] = true
+            set[shortName(name)] = isOnline and true or false
         end
     end
     return set
@@ -344,7 +345,13 @@ local function sendIndex(target, wantReply)
         return
     end
     local lines = {}
-    Sync.Chunk(lines, "X:" .. Sync.VERSION .. ":", Sync.IndexItems(data, members()), ",")
+    local roster = members()
+    local inGuild
+    if roster then
+        inGuild = {}
+        for name in pairs(roster) do inGuild[name] = true end
+    end
+    Sync.Chunk(lines, "X:" .. Sync.VERSION .. ":", Sync.IndexItems(data, inGuild), ",")
     debug(string.format("index to %s: %d lines", target, #lines))
     for _, line in ipairs(lines) do
         send(line, "WHISPER", target)
@@ -368,11 +375,25 @@ function handlers.H(sender, rest, channel)
         C_Timer.After(math.random(2, 8), function() send("H:" .. Sync.VERSION .. ":" .. Sync.MyHash(), "WHISPER", sender) end)
     end
     -- A whispered hello answers ours: swap indexes with the first few, to
-    -- catch up on guildmates who aren't online.
+    -- catch up on guildmates who aren't online. Wait until the other replies
+    -- are in (they come 2-8s after our hello), so online crafters are known
+    -- and asked directly instead of through a relay.
     if channel == "WHISPER" and data and exchanges < MAX_EXCHANGES and not exchanged[sender] then
-        exchanges = exchanges + 1
         exchanged[sender] = true
-        sendIndex(sender, true)
+        candidates[#candidates + 1] = sender
+        if not exchangeScheduled then
+            exchangeScheduled = true
+            C_Timer.After(10, function()
+                exchangeScheduled = false
+                for _, peer in ipairs(candidates) do
+                    if exchanges < MAX_EXCHANGES then
+                        exchanges = exchanges + 1
+                        sendIndex(peer, true)
+                    end
+                end
+                candidates = {}
+            end)
+        end
     end
 end
 
@@ -427,10 +448,13 @@ function handlers.Y(sender, rest)
     end
     local roster = members()
     local wanted = Sync.Wanted(theirs, data, function(owner)
-        -- Online owners send their own; people who left aren't wanted.
-        return isSelf(owner) or owner == sender or Sync.seen[owner]
+        -- Owners online with the addon send their own; people who left
+        -- aren't wanted.
+        local short = shortName(owner)
+        local online = Sync.seen[owner] and (not roster or roster[short])
+        return isSelf(owner) or owner == sender or online
             or requested[owner] == theirs[owner].hash
-            or (roster and not roster[shortName(owner)])
+            or (roster and roster[short] == nil)
     end)
     debug(string.format("index from %s: asking for %d", sender, #wanted))
     for _, owner in ipairs(wanted) do

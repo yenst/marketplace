@@ -225,6 +225,10 @@ addon("X:1:Eve-Mirage=" .. eveHash .. "=50", "WHISPER", "Fenna-Mirage")
 addon("Y:1:1", "WHISPER", "Fenna-Mirage")
 assert(sentTo("Fenna-Mirage", "Eve%-Mirage=") and sentTo("Fenna-Mirage", "^Y:1:0$"), "index sent back when asked")
 assert(not sentTo("Fenna-Mirage", "^R:"), "same copy: nothing to ask for")
+out = {}
+addon("X:1:Dan-Mirage=ffffffff=999", "WHISPER", "Fenna-Mirage")
+addon("Y:1:0", "WHISPER", "Fenna-Mirage")
+assert(not sentTo("Fenna-Mirage", "^R:1:Dan"), "Dan is online with the addon: get his recipes from him, not a relay")
 
 out = {}
 addon("R:1", "WHISPER", "Dan-Mirage")
