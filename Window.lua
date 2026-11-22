@@ -132,6 +132,18 @@ local function gameProfessions()
     return list
 end
 
+-- A class's round icon, hidden when the class isn't known.
+local function setClassIcon(tex, class)
+    local coords = class and CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[class]
+    if coords then
+        tex:SetTexture("Interface\\TargetingFrame\\UI-Classes-Circles")
+        tex:SetTexCoord(unpack(coords))
+        tex:Show()
+    else
+        tex:Hide()
+    end
+end
+
 local function classColor(class)
     local c = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
     return c and { c.r, c.g, c.b, 1 } or Theme.text
@@ -331,8 +343,11 @@ local function buildMemberMenu()
         row.dot:SetSize(6, 6)
         row.dot:SetPoint("LEFT", 6, 0)
         row.dot:SetColorTexture(unpack(Theme.online))
+        row.class = row:CreateTexture(nil, "ARTWORK")
+        row.class:SetSize(15, 15)
+        row.class:SetPoint("LEFT", 16, 0)
         row.label = W.Text(row, 12)
-        row.label:SetPoint("LEFT", 18, 0)
+        row.label:SetPoint("LEFT", 36, 0)
         row.label:SetPoint("RIGHT", -40, 0)
         row.count = W.Text(row, 11, Theme.muted, "RIGHT")
         row.count:SetPoint("RIGHT", -6, 0)
@@ -640,11 +655,14 @@ local function buildDetail()
         row.dot = row:CreateTexture(nil, "ARTWORK")
         row.dot:SetSize(8, 8)
         row.dot:SetPoint("LEFT", 4, 0)
+        row.class = row:CreateTexture(nil, "ARTWORK")
+        row.class:SetSize(22, 22)
+        row.class:SetPoint("LEFT", 18, 0)
         row.name = W.Text(row, 12)
-        row.name:SetPoint("TOPLEFT", 20, -2)
+        row.name:SetPoint("TOPLEFT", 46, -2)
         row.name:SetPoint("RIGHT", -76, 0)
         row.status = W.Text(row, 11, Theme.muted)
-        row.status:SetPoint("BOTTOMLEFT", 20, 2)
+        row.status:SetPoint("BOTTOMLEFT", 46, 2)
         row.status:SetPoint("RIGHT", -76, 0)
         row.whisper = W.Button(row, "Whisper", 66, 20, function(self)
             whisper(self.target, state.selected and recipeLink(state.selected))
@@ -1005,6 +1023,9 @@ function Window.DrawDetail()
             row.dot:SetAlpha((c.state == "noaddon" or c.state == "pinging") and 0.45 or 1)
             row.name:SetText(c.name)
             row.name:SetTextColor(unpack(onlineState and classColor(c.class) or Theme.muted))
+            setClassIcon(row.class, c.class)
+            row.class:SetDesaturated(not onlineState)
+            row.class:SetAlpha(onlineState and 1 or 0.6)
             row.status:SetText(Data.StatusText(c, time()))
             row.whisper.target = c.name
             row.pick.key, row.pick.name = c.key, c.name
@@ -1037,6 +1058,7 @@ function Window.DrawMemberMenu()
             row.label:SetText(e.name)
             local selected = e.key == state.member
             row.label:SetTextColor(unpack(e.key and classColor(e.class) or Theme.text))
+            setClassIcon(row.class, e.key and e.class)
             row.label:SetAlpha((selected or not state.member and not e.key) and 1 or 0.85)
             row.count:SetText(e.count and tostring(e.count) or "")
             row.dot:SetShown(e.state ~= nil and Data.IsOnline(e.state))

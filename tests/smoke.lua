@@ -391,6 +391,7 @@ ChatFrame_SendTell = function(name) told = name end
 ChatEdit_GetActiveWindow = function() return { Insert = function(_, text) inserted = text end } end
 MarketplaceDB.recipes[18238] = { name = "Spotted Yellowtail", item = 13927, reagents = { { 13754, 1 } } }
 
+CLASS_ICON_TCOORDS = { PALADIN = { 0.5, 0.75, 0.5, 0.75 }, WARRIOR = { 0, 0.25, 0, 0.25 } }
 local win = _G.MarketplaceWindow
 SlashCmdList.MARKETPLACE("")
 assert(win.shown, "window opens")
@@ -434,6 +435,7 @@ assert(win.selName.text:find("Spotted Yellowtail"), "first recipe selected and s
 assert(win.reagents[1].shown and win.reagents[1].count.text == "1/1", "reagent with have/need")
 assert(win.crafters[1].name.text == "Dan", "Dan listed as crafter")
 assert(not win.nobody.shown, "has crafters")
+assert(win.crafters[1].class.shown, "class icon next to Dan")
 assert(win.sourceText.text:find("Vendor") and win.sourceText.text:find("Zone 440"), "sold in Tanaris: " .. win.sourceText.text)
 win.crafters[1].whisper.scripts.OnClick(win.crafters[1].whisper)
 assert(told == "Dan" and inserted:find("Henchant:18238"), "whisper opens a tell with the recipe link")
@@ -493,6 +495,7 @@ assert(win.memberMenu.shown and win.memberMenu.rows[1].label.text == "All member
 local danRow
 for _, row in ipairs(win.memberMenu.rows) do if row.shown and row.label.text == "Dan" then danRow = row end end
 assert(danRow and danRow.count.text == "1", "Dan in the menu with 1 pattern here")
+assert(danRow.class.shown and not win.memberMenu.rows[1].class.shown, "class icons in the member menu, none for All members")
 danRow.scripts.OnClick(danRow)
 assert(not win.memberMenu.shown and win.member.text.text == "Dan", "filtered to Dan")
 assert(win.barText.text:find("^Dan knows 1 of %d+ patterns$"), "header: " .. win.barText.text)
