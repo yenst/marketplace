@@ -100,6 +100,8 @@ function Scanner.Store(char, profession, meta, now)
     return profession
 end
 
+local misses = {} -- recipe ID -> fallback meta or true, for lookups that failed
+
 -- Recipe metadata for any recipe ID, from the cache or looked up and cached.
 -- Forever answers these lookups without the profession window open.
 function Scanner.Meta(id)
@@ -108,9 +110,18 @@ function Scanner.Meta(id)
         return cache[id]
     end
     local T = C_TradeSkillUI
+    if misses[id] then
+        return misses[id] ~= true and misses[id] or nil
+    end
     local info = T and T.GetRecipeInfo and T.GetRecipeInfo(id)
     if not info or not info.name then
-        return Scanner.CatalogMeta(id)
+        -- Remembered for the session, so redraws don't ask again (unless
+        -- the spell name is still loading).
+        local fallback = Scanner.CatalogMeta(id)
+        if not fallback or fallback.name then
+            misses[id] = fallback or true
+        end
+        return fallback
     end
     local schematic = T.GetRecipeSchematic and T.GetRecipeSchematic(id, false)
     local meta = {
@@ -148,6 +159,46 @@ function Scanner.CatalogMeta(id)
         catalogMeta[id] = meta
     end
     return meta
+end
+
+-- The profession skill lines this character has now, or nil if the client
+-- can't say.
+local function learnedProfessions()
+    if not (GetProfessions and GetProfessionInfo) then
+        return nil
+    end
+    local set, any = {}, false
+    for _, index in pairs({ GetProfessions() }) do
+        local skillLine = index and select(7, GetProfessionInfo(index))
+        if skillLine then
+            set[skillLine], any = true, true
+        end
+    end
+    return any and set or nil
+end
+
+-- Forgets professions this character has since unlearned, so they stop
+-- being shared. Only when the client's list agrees with at least one stored
+-- profession (so a different ID scheme can't wipe them all).
+function Scanner.DropUnlearned(char, learned)
+    learned = learned or learnedProfessions()
+    if not (char and char.professions and learned) then
+        return
+    end
+    local agrees = false
+    for id in pairs(char.professions) do
+        if learned[id] then
+            agrees = true
+        end
+    end
+    if not agrees then
+        return
+    end
+    for id in pairs(char.professions) do
+        if not learned[id] then
+            char.professions[id] = nil
+        end
+    end
 end
 
 -- Number of learned recipes in a profession record.

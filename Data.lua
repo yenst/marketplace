@@ -26,11 +26,18 @@ Data.IsOnline = online
 --   guildData = { [sender] = { professions, updated } }            synced guildmates
 --   roster = { [shortName] = { online, class, lastOnline } }       guild roster
 --   seen = { [sender] = time }                                     running the addon this session
+--   trustRoster = bool   roster is complete: hide synced people not on it (left the guild)
 -- }
+-- Own characters may lack the full name others see them by ("Billy" for
+-- "Billy Joel", own = { …, partial = true }); a synced entry whose first
+-- name and class match one of those is that character, so it's skipped.
 -- Returns { { key, name, class, state, lastOnline, updated, professions, mine } }.
 function Data.Crafters(ctx)
-    local list, taken = {}, {}
+    local list, taken, partial = {}, {}, {}
     for _, c in ipairs(ctx.own or {}) do
+        if c.partial then
+            partial[c.name] = c.class or true
+        end
         local short = Data.ShortName(c.name)
         local r = (ctx.roster or {})[short]
         list[#list + 1] = {
@@ -42,8 +49,11 @@ function Data.Crafters(ctx)
     end
     for sender, entry in pairs(ctx.guildData or {}) do
         local short = Data.ShortName(sender)
-        if not taken[short] then
-            local r = (ctx.roster or {})[short]
+        local r = (ctx.roster or {})[short]
+        local first = short:match("^(%S+) ")
+        local mineToo = first and partial[first] and (partial[first] == true or not r or r.class == partial[first])
+        local left = ctx.trustRoster and not r and not (ctx.seen or {})[sender]
+        if not taken[short] and not mineToo and not left and next(entry.professions or {}) then
             local state = "offline"
             if r and not r.online then
                 state = "offline" -- logged off since we last heard from them
@@ -201,17 +211,17 @@ function Data.List(recipes, filter, metaOf, itemName)
     local groups, order, sortKey = {}, {}, {}
     local count = 0
     for id, r in pairs(recipes) do
-        if filter.prof == "all" or filter.prof == r.prof then
-            local meta = metaOf(id) or {}
+        local nobody = #r.crafters == 0
+        -- Cheap checks first: the catalog has ~2000 recipes.
+        if (filter.prof == "all" or filter.prof == r.prof) and not (nobody and filter.prof == "all" and query == "") then
             local on = 0
             for _, c in ipairs(r.crafters) do
                 if online(c.state) then
                     on = on + 1
                 end
             end
-            local nobody = #r.crafters == 0
-            local shown = not (nobody and filter.prof == "all" and query == "")
-            if shown and (not filter.onlineOnly or on > 0) and matches(r, meta, query, itemName) then
+            local meta = (not filter.onlineOnly or on > 0) and (metaOf(id) or {})
+            if meta and matches(r, meta, query, itemName) then
                 local favorite = filter.favorites and filter.favorites[id] or false
                 local key = favorite and Data.FAVORITES or (nobody and Data.NOBODY)
                     or (filter.prof == "all" and r.profName or r.catName)

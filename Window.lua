@@ -62,6 +62,32 @@ local function itemCount(id)
     return GetItemCount and GetItemCount(id, true) or 0
 end
 
+local function itemLink(id)
+    if not id then
+        return nil
+    end
+    local link = GetItemInfo and select(2, GetItemInfo(id))
+    return link or ("item:" .. id)
+end
+
+-- Shift-click links the item in chat, ctrl-click previews it in the
+-- dressing room (Blizzard's handler, or the same by hand).
+local function modifiedItemClick(id)
+    local link = itemLink(id)
+    if not link then
+        return false
+    end
+    if HandleModifiedItemClick then
+        return HandleModifiedItemClick(link)
+    end
+    if IsModifiedClick and IsModifiedClick("CHATLINK") and ChatEdit_InsertLink then
+        return ChatEdit_InsertLink(link)
+    elseif IsModifiedClick and IsModifiedClick("DRESSUP") and DressUpItemLink then
+        return DressUpItemLink(link)
+    end
+    return false
+end
+
 local function recipeLink(id)
     local T = C_TradeSkillUI
     return T and T.GetRecipeLink and T.GetRecipeLink(id)
@@ -119,7 +145,7 @@ local function gather()
     local own = {}
     for _, c in pairs(ns.db.chars) do
         if c == ns.char or (guild and c.guild == guild) then
-            own[#own + 1] = { name = c.fullName or c.name, class = c.class, professions = c.professions, current = c == ns.char }
+            own[#own + 1] = { name = c.fullName or c.name, class = c.class, professions = c.professions, current = c == ns.char, partial = not c.fullName }
         end
     end
     local roster, size = readRoster()
@@ -128,6 +154,7 @@ local function gather()
         guildData = guild and ns.db.guilds[guild] or {},
         roster = roster,
         seen = ns.Sync.seen,
+        trustRoster = ns.Sync.Members() ~= nil,
     })
     model.crafters, model.rosterSize = crafters, size
     local names = {}
@@ -253,9 +280,17 @@ local function buildHeader()
 end
 
 local function buildFilters()
+    -- Redraw once typing pauses: every search scans the whole catalog.
+    local searchToken
     frame.search = W.SearchBox(frame.browse, 520, "Search recipes, reagents or members", function(text)
         state.query, state.offset = text, 0
-        Window.Refresh()
+        local token = {}
+        searchToken = token
+        C_Timer.After(0.25, function()
+            if searchToken == token then
+                Window.Refresh()
+            end
+        end)
     end)
     frame.search:SetPoint("TOPLEFT", PAD, -102)
     local online = W.Toggle(frame.browse, "Online only", function() return state.onlineOnly end, function(v)
@@ -347,6 +382,13 @@ local function buildList()
                 ChatEdit_InsertLink(link)
                 return
             end
+            if IsModifiedClick and IsModifiedClick("DRESSUP") then
+                local meta = ns.Scanner.Meta(item.recipe.id)
+                if meta and meta.item then
+                    modifiedItemClick(meta.item)
+                end
+                return
+            end
             state.selected, state.crafterOffset = item.recipe.id, 0
             Window.DrawList()
             Window.DrawDetail()
@@ -373,6 +415,13 @@ local function buildDetail()
         end
     end)
     tile:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    tile:SetScript("OnMouseUp", function()
+        local meta = state.selected and ns.Scanner.Meta(state.selected)
+        if meta and meta.item then
+            modifiedItemClick(meta.item)
+        end
+    end)
+    frame.selTile = tile
     frame.selIcon = tile.icon
     frame.selName = W.Text(left, 14)
     frame.selName:SetPoint("TOPLEFT", tile, "TOPRIGHT", 10, -3)
@@ -426,6 +475,11 @@ local function buildDetail()
             end
         end)
         slot:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        slot:SetScript("OnMouseUp", function(self)
+            if self.itemID then
+                modifiedItemClick(self.itemID)
+            end
+        end)
         frame.reagents[i] = slot
     end
     frame.reagentLabel = label
@@ -536,9 +590,8 @@ local function buildDetail()
     end)
     source:SetScript("OnLeave", function() GameTooltip:Hide() end)
     source:SetScript("OnMouseUp", function(self)
-        local link = self.itemID and select(2, GetItemInfo(self.itemID))
-        if link and IsModifiedClick and IsModifiedClick("CHATLINK") and ChatEdit_InsertLink then
-            ChatEdit_InsertLink(link)
+        if self.itemID then
+            modifiedItemClick(self.itemID) -- the pattern / recipe item
         end
     end)
     local line = W.Line(source)
@@ -565,7 +618,7 @@ local function buildFooter()
     frame.footer:SetPoint("BOTTOMLEFT", 12, 8)
     local hint = W.Text(frame.browse, 11, Theme.muted, "RIGHT")
     hint:SetPoint("BOTTOMRIGHT", -12, 8)
-    hint:SetText("Shift-click to link in chat · right-click to favorite")
+    hint:SetText("Shift-click to link · ctrl-click to preview · right-click to favorite")
 end
 
 local function buildTabs()

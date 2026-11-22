@@ -61,17 +61,32 @@ function Sync.Djb2(text)
     return string.format("%08x", h)
 end
 
--- Fingerprint of everything that's shared: professions, skills, recipe IDs.
+-- Fingerprint of what's shared: professions, max skill, recipe and category
+-- IDs. The current skill is left out, so levelling alone doesn't resend a
+-- copy; it travels along with the next real change.
 function Sync.Hash(professions)
     local parts = {}
     for _, id in ipairs(sortedKeys(professions)) do
         local p = professions[id]
-        parts[#parts + 1] = id .. "/" .. (p.skill or 0) .. "/" .. (p.maxSkill or 0)
+        parts[#parts + 1] = id .. "/" .. (p.maxSkill or 0)
         for _, recipe in ipairs(sortedKeys(p.recipes)) do
             parts[#parts + 1] = tostring(recipe)
         end
+        parts[#parts + 1] = "c"
+        for _, cat in ipairs(sortedKeys(p.categories)) do
+            parts[#parts + 1] = tostring(cat)
+        end
     end
     return Sync.Djb2(table.concat(parts, ","))
+end
+
+-- Whether copy a (hash, stamp) beats copy b: newer stamp, ties by hash so
+-- every client picks the same one.
+function Sync.Newer(a, b)
+    if a.stamp ~= b.stamp then
+        return a.stamp > b.stamp
+    end
+    return a.hash > b.hash
 end
 
 -- Only professions with something to craft are shared (not Fishing etc.).
@@ -199,11 +214,11 @@ function Sync.Encode(professions, owner, stamp)
     local lines = { string.format("B:%s:%s:%d:%s", Sync.VERSION, hash, stamp, owner or "") }
     for _, id in ipairs(sortedKeys(professions)) do
         local p = professions[id]
-        lines[#lines + 1] = string.format("P:%d:%d:%d:%s", id, p.skill or 0, p.maxSkill or 0, clean(p.name))
+        lines[#lines + 1] = string.format("P:%d:%d:%d:%s", id, p.skill or 0, p.maxSkill or 0, clean(p.name):sub(1, 60))
         local cats = {}
         for _, cat in ipairs(sortedKeys(p.categories)) do
             local c = p.categories[cat]
-            cats[#cats + 1] = cat .. "=" .. (c.parent or 0) .. "=" .. clean(c.name)
+            cats[#cats + 1] = cat .. "=" .. (c.parent or 0) .. "=" .. clean(c.name):sub(1, 60)
         end
         Sync.Chunk(lines, "C:" .. id .. ":", cats, ";")
         Sync.Chunk(lines, "I:" .. id .. ":", packRecipes(p.recipes or {}), "")
@@ -312,9 +327,9 @@ function Sync.Compare(list, state, bucket, skip)
     for _, owner in ipairs(sortedKeys(list)) do
         local e, mine = list[owner], state[owner]
         if not (skip and skip(owner)) then
-            if not mine or (mine.hash ~= e.hash and e.stamp > mine.stamp) then
+            if not mine or (mine.hash ~= e.hash and Sync.Newer(e, mine)) then
                 wanted[#wanted + 1] = owner
-            elseif mine.hash ~= e.hash and mine.stamp > e.stamp then
+            elseif mine.hash ~= e.hash then
                 offer[#offer + 1] = owner
             end
         end
@@ -346,19 +361,26 @@ end
 -- tag (its owner) so a copy someone else already sent can be dropped.
 local queue, pumping = {}, false
 
+-- Sends one line every 0.25s; a throttled (or refused) line is retried
+-- after a second, up to 10 times. An error drops the line, not the queue.
 local function pump()
     local item = queue[1]
     if not item then
         pumping = false
         return
     end
-    local result = C_ChatInfo.SendAddonMessage(item.prefix, item.text, item.channel, item.target)
+    local ok, result = pcall(C_ChatInfo.SendAddonMessage, item.prefix, item.text, item.channel, item.target)
     local codes = Enum and Enum.SendAddonMessageResult or {}
-    local throttled = result == (codes.AddonMessageThrottle or 3) or result == (codes.ChannelThrottle or 8)
-    if not throttled then
-        table.remove(queue, 1)
+    local retry = ok and (result == false or result == (codes.AddonMessageThrottle or 3) or result == (codes.ChannelThrottle or 8))
+    if retry then
+        item.tries = (item.tries or 0) + 1
+        retry = item.tries < 10
     end
-    C_Timer.After(0.25, pump)
+    if not retry then
+        table.remove(queue, 1)
+        item.sent = true
+    end
+    C_Timer.After(retry and 1 or 0.25, pump)
 end
 
 local function enqueue(item, control)
@@ -388,13 +410,22 @@ local function control(text)
 end
 
 local function sendCopyLines(lines, tag)
-    for _, line in ipairs(lines) do
-        enqueue({ prefix = Sync.PREFIX, text = line, channel = "GUILD", tag = tag })
+    for i, line in ipairs(lines) do
+        enqueue({ prefix = Sync.PREFIX, text = line, channel = "GUILD", tag = tag, first = i == 1 })
     end
 end
 
--- Drops queued lines of a copy (also the rest of one already started:
--- receivers discard the incomplete copy).
+-- A copy of this owner is queued and hasn't started going out yet.
+local function unstarted(tag)
+    for _, item in ipairs(queue) do
+        if item.tag == tag and item.first then
+            return true
+        end
+    end
+    return false
+end
+
+-- Drops queued lines of a copy.
 local function dequeue(tag)
     for i = #queue, 1, -1 do
         if queue[i].tag == tag then
@@ -440,6 +471,10 @@ end
 -- Our own guild hello came back: remember the name it came from.
 function Sync.LearnSelf(sender)
     Sync.selfName = sender
+    if Sync.ownWaiting then
+        Sync.ownWaiting = false
+        C_Timer.After(1, function() Sync.SendOwnSoon() end)
+    end
     if ns.char then
         ns.char.fullName = sender
     end
@@ -474,11 +509,13 @@ local function entryStamp(entry)
     return entry.stamp or Sync.Stamp(entry.professions)
 end
 
--- Everyone in the guild by short name (value: online or not), or nil
--- before the roster loads.
+-- Everyone in the guild by short name (value: online or not), or nil when
+-- it can't be trusted to say who left: not loaded yet, offline members
+-- hidden, or our own name missing from it (the roster spells names
+-- differently from addon messages).
 local function members()
     local n = GetNumGuildMembers and GetNumGuildMembers() or 0
-    if n == 0 then
+    if n == 0 or (GetGuildRosterShowOffline and not GetGuildRosterShowOffline()) then
         return nil
     end
     local set = {}
@@ -488,15 +525,21 @@ local function members()
             set[shortName(name)] = isOnline and true or false
         end
     end
+    local me = Sync.selfName or (ns.char and ns.char.fullName)
+    if not me or set[shortName(me)] == nil then
+        return nil
+    end
     return set
 end
+Sync.Members = members
 
 local function isSelf(owner)
     return Sync.IsMe(owner) or owner == selfKey()
 end
 
+-- Someone we heard from this session is in the guild, whatever the roster says.
 local function leftGuild(roster, owner)
-    return roster ~= nil and roster[shortName(owner)] == nil
+    return roster ~= nil and roster[shortName(owner)] == nil and not Sync.seen[owner]
 end
 
 -- What we hold, ourselves included: { [owner] = { hash, stamp } }.
@@ -508,8 +551,10 @@ local function myState(roster)
             state[owner] = { hash = e.hash, stamp = entryStamp(e) }
         end
     end
+    -- Ourselves, also once we have nothing left to share (so others drop
+    -- what they hold of us).
     local key = selfKey()
-    if key and ns.char and next(myShare()) then
+    if key and ns.char and (next(myShare()) or ns.char.shareStamp) then
         state[key] = { hash = Sync.MyHash(), stamp = ownStamp() }
     end
     return state
@@ -526,16 +571,24 @@ end
 Sync.DEBOUNCE, Sync.MIN_INTERVAL, Sync.ASKED_INTERVAL = 30, 120, 15
 local SELF = "@self"           -- tag/pending key for our own copy
 local pendingSend = {}         -- owner (or SELF) -> token of a scheduled copy
-local lastOwnAt, lastOwnHash = -math.huge, nil
+local lastOwnAt = -math.huge
+local schedule
 
 local function sendCopy(owner)
     if owner == SELF then
-        local share = myShare()
-        if not next(share) then
+        if not Sync.selfName then
+            -- Our hello hasn't echoed back yet, so we can't yet tell our
+            -- own copy from a guildmate's: send once it has.
+            Sync.ownWaiting = true
             return
         end
+        local share = myShare()
+        if not next(share) and not ns.char.shareStamp then
+            return -- never shared anything
+        end
         local lines, hash = Sync.Encode(share, nil, ownStamp())
-        lastOwnAt, lastOwnHash = time(), hash
+        lastOwnAt = time()
+        ns.char.sentHash = hash -- saved: no resend next session if unchanged
         debug(string.format("our recipes to the guild: %d lines", #lines))
         sendCopyLines(lines, SELF)
         return
@@ -549,8 +602,8 @@ local function sendCopy(owner)
     end
 end
 
-local function schedule(owner, delay)
-    if pendingSend[owner] then
+function schedule(owner, delay)
+    if pendingSend[owner] or unstarted(owner) then
         return
     end
     local token = {}
@@ -567,7 +620,7 @@ end
 -- MIN_INTERVAL); otherwise someone needs it (soon, at most every 15s).
 local function scheduleOwn(changed)
     if changed then
-        if Sync.MyHash() == lastOwnHash then
+        if Sync.MyHash() == ns.char.sentHash then
             return
         end
         schedule(SELF, math.max(Sync.DEBOUNCE, lastOwnAt + Sync.MIN_INTERVAL - time()))
@@ -576,9 +629,16 @@ local function scheduleOwn(changed)
     end
 end
 
+-- Someone else started the same copy: drop ours unless it's already going out.
+function Sync.SendOwnSoon()
+    scheduleOwn(false)
+end
+
 local function cancel(owner)
     pendingSend[owner] = nil
-    dequeue(owner)
+    if unstarted(owner) then
+        dequeue(owner)
+    end
 end
 
 -- Asking for copies -----------------------------------------------------------
@@ -587,6 +647,14 @@ local REQUEST_TIMEOUT = 30
 local requested = {}   -- owner -> { hash, at } asked for (by us or someone)
 local wanted = {}      -- owner -> hash to ask for in the next R
 local askPending = false
+local retried = {}     -- "owner=hash" -> true once re-asked
+local want
+
+local function have(owner, hash)
+    local data = Sync.GuildData()
+    local entry = data and data[owner]
+    return entry and entry.hash == hash
+end
 
 local function askedRecently(owner, hash)
     local r = requested[owner]
@@ -600,7 +668,18 @@ local function flushAsks()
         items[#items + 1] = owner .. "=" .. wanted[owner]
         requested[owner] = { hash = wanted[owner], at = time() }
     end
+    local asked = wanted
     wanted = {}
+    -- No copy came: ask once more after the timeout.
+    C_Timer.After(REQUEST_TIMEOUT + 5, function()
+        for owner, hash in pairs(asked) do
+            local key = owner .. "=" .. hash
+            if not have(owner, hash) and not retried[key] then
+                retried[key] = true
+                want(owner, hash)
+            end
+        end
+    end)
     local lines = {}
     Sync.Chunk(lines, "R:" .. Sync.VERSION .. ":", items, ",")
     for _, line in ipairs(lines) do
@@ -611,8 +690,8 @@ local function flushAsks()
     end
 end
 
-local function want(owner, hash)
-    if askedRecently(owner, hash) then
+function want(owner, hash)
+    if askedRecently(owner, hash) or have(owner, hash) then
         return
     end
     wanted[owner] = hash
@@ -748,15 +827,18 @@ function handlers.L(sender, rest)
     bucket = tonumber(bucket)
     pendingList[to .. "|" .. bucket] = nil -- someone listed it: we needn't
     local key = sender .. "|" .. to .. "|" .. bucket
-    local into = incoming[key] or {}
-    incoming[key] = into
+    local into = incoming[key]
+    if not into or time() - into.at > 30 then -- a lost last line: start over
+        into = { at = time(), list = {} }
+        incoming[key] = into
+    end
     for owner, hash, stamp in list:gmatch("([^,=]+)=(%x+)=(%d+)") do
-        into[owner] = { hash = hash, stamp = tonumber(stamp) }
+        into.list[owner] = { hash = hash, stamp = tonumber(stamp) }
     end
     if more == "0" then
         incoming[key] = nil
         if ready() then
-            reconcile(into, bucket)
+            reconcile(into.list, bucket)
         end
     end
 end
@@ -794,7 +876,9 @@ local function onBegin(sender, line)
         return
     end
     owner = owner or sender
-    wanted[owner] = nil
+    if wanted[owner] == hash then
+        wanted[owner] = nil
+    end
     if isSelf(owner) then
         if ns.char and hash == Sync.MyHash() then
             cancel(SELF)
@@ -803,7 +887,8 @@ local function onBegin(sender, line)
     end
     local data = Sync.GuildData()
     local mine = data and data[owner]
-    if pendingSend[owner] and (not mine or stamp >= entryStamp(mine)) then
+    if (pendingSend[owner] or unstarted(owner))
+        and (not mine or not Sync.Newer({ hash = mine.hash, stamp = entryStamp(mine) }, { hash = hash, stamp = stamp })) then
         cancel(owner)
     end
 end
@@ -832,7 +917,8 @@ local function store(sender, professions, hash, owner, stamp)
             return
         end
         local known = data[owner]
-        if (known and (known.hash == hash or entryStamp(known) >= stamp)) or leftGuild(members(), owner) then
+        if (known and (known.hash == hash or not Sync.Newer({ hash = hash, stamp = stamp }, { hash = known.hash, stamp = entryStamp(known) })))
+            or leftGuild(members(), owner) then
             return
         end
         -- updated: the owner's last change, the last time we know they were on.
@@ -859,7 +945,8 @@ function Sync.OnMessage(prefix, text, channel, sender)
         return -- guild only: nobody outside it can send there
     end
     local code = text:match("^H:%d+:%x+:(%x+):")
-    if code and code == Sync.code then
+    local me = UnitName("player") or ""
+    if code and code == Sync.code and sender:sub(1, #me) == me then
         Sync.LearnSelf(sender)
         return
     end
@@ -899,24 +986,41 @@ function Sync.Announce(force, tries)
         return
     end
     if not Sync.GuildData() then
-        -- The guild name isn't known yet right after login: try again.
+        -- The guild name isn't known yet right after login: try again
+        -- (every 5s for 5 minutes; joining a guild also calls this).
         tries = (tries or 0) + 1
-        if tries <= 6 then
+        if tries <= 60 then
             C_Timer.After(5, function() Sync.Announce(true, tries) end)
         end
         return
     end
+    Sync.helloGuild = GetGuildInfo("player")
+    Sync.RequestRoster()
     debug("hello to guild")
     control(string.format("H:%s:%s:%s:%s", Sync.VERSION, Sync.MyHash(), Sync.code, Sync.Digest(myState(members()))))
 end
 
+-- Said hello in the guild we're in now? Otherwise (joined one, or the
+-- login hello gave up) say it.
+function Sync.EnsureHello()
+    if IsInGuild() and GetGuildInfo("player") and Sync.helloGuild ~= GetGuildInfo("player") then
+        Sync.Announce(true)
+    end
+end
+
 -- Every 15 minutes: compare digests again, unless someone's matched ours
--- since the last check (then the guild already agrees).
+-- since the last check (then the guild already agrees). A random wait first,
+-- so clients that started together don't all send one.
 Sync.CHECK_INTERVAL = 900
-function Sync.Check()
+function Sync.Check(now)
     if not IsInGuild() or not ready() or time() - lastMatchAt < Sync.CHECK_INTERVAL then
         return
     end
+    if not now then
+        C_Timer.After(math.random() * 60, function() Sync.Check(true) end)
+        return
+    end
+    Sync.RequestRoster()
     control("D:" .. Sync.VERSION .. ":" .. Sync.Digest(myState(members())))
 end
 
@@ -927,8 +1031,10 @@ function Sync.Report()
         return { "Not in a guild." }
     end
     local lines, names = {}, {}
-    for name in pairs(data) do
-        names[#names + 1] = name
+    for name, entry in pairs(data) do
+        if next(entry.professions or {}) then -- not those who stopped sharing
+            names[#names + 1] = name
+        end
     end
     table.sort(names)
     for _, name in ipairs(names) do

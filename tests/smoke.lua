@@ -181,6 +181,10 @@ MarketplaceDB.guilds["Test Guild"] = { ["Tester Joel"] = { hash = "x", professio
 addon(hello, "GUILD", "Tester Joel")
 assert(ns.Sync.selfName == "Tester Joel", "own name learned from the echo")
 assert(MarketplaceDB.guilds["Test Guild"]["Tester Joel"] == nil, "a stored copy of ourselves is dropped")
+-- The scan earlier waited for our name; now our copy goes out.
+out = {}
+flush()
+assert(sent("^B:2:%x+:%d+:$"), "our copy, once our name is known")
 out = {}
 addon("R:2:Tester Joel=" .. ns.Sync.MyHash(), "GUILD", "Tester Joel")
 addon("H:2:abcd1234:abcdef:" .. ("0"):rep(64), "WHISPER", "Dan-Mirage")
@@ -290,6 +294,31 @@ addon("R:2:Eve-Mirage=" .. eveHash, "GUILD", "Hana-Mirage")
 flush()
 assert(sent("^B:2:" .. eveHash .. ":50:Eve%-Mirage$"), "asked for Eve: we relay her")
 
+-- A copy already queued (but not started) is dropped when someone else
+-- starts the same one first.
+local throttle = true
+local realSend = C_ChatInfo.SendAddonMessage
+C_ChatInfo.SendAddonMessage = function(prefix, text, channel, target)
+    if throttle then return 3 end
+    return realSend(prefix, text, channel, target)
+end
+out = {}
+addon("L:2:Hana-Mirage:" .. eveBucket .. ":0:", "GUILD", "Gus-Mirage")
+table.remove(timers, 1)() -- our wait runs out: Eve's copy is queued, throttled
+addon(eveLines[1], "GUILD", "Kim-Mirage")
+throttle = false
+flush()
+assert(not sent("Eve%-Mirage"), "queued copy dropped when Kim started first")
+C_ChatInfo.SendAddonMessage = realSend
+
+-- Someone with nothing left to share: an empty copy replaces theirs.
+local pia = { [197] = { id = 197, name = "Tailoring", skill = 5, maxSkill = 75, recipes = { [2387] = 0 }, categories = {} } }
+for _, line in ipairs((ns.Sync.Encode(pia, nil, 100))) do addon(line, "GUILD", "Pia-Mirage") end
+assert(next(MarketplaceDB.guilds["Test Guild"]["Pia-Mirage"].professions), "Pia's recipes")
+for _, line in ipairs((ns.Sync.Encode({}, nil, 200))) do addon(line, "GUILD", "Pia-Mirage") end
+assert(not next(MarketplaceDB.guilds["Test Guild"]["Pia-Mirage"].professions), "Pia dropped her profession")
+flush()
+
 -- A new scan: one broadcast; nothing again until it changes.
 out = {}
 ns.Sync.Announce()
@@ -313,12 +342,14 @@ assert(#out == 0, "a digest matched ours recently: no check")
 local realTime = time
 time = function() return realTime() + 1200 end
 ns.Sync.Check()
+flush() -- after a random wait
 assert(sent("^D:2:%x+$"), "periodic digest check")
 out = {}
-local full = { ["Dan-Mirage"] = { hash = danHash }, ["Tester Joel"] = { hash = myHash }, ["Eve-Mirage"] = { hash = eveHash } }
+local full = { ["Dan-Mirage"] = { hash = danHash }, ["Tester Joel"] = { hash = myHash }, ["Eve-Mirage"] = { hash = eveHash }, ["Pia-Mirage"] = { hash = ns.Sync.Hash({}) } }
 addon("D:2:" .. digestOf(full), "GUILD", "Dan-Mirage")
 flush()
 ns.Sync.Check()
+flush()
 assert(#out == 0, "someone's digest matched ours: no check needed")
 time = realTime
 C_Timer.After = function(_, fn) fn() end
@@ -455,6 +486,16 @@ assert(rows[1].header and rows[1].label == "Favorites" and rows[2].name == "Spot
 win.favorite.scripts.OnClick(win.favorite)
 assert(not MarketplaceDB.favorites[18238], "star in the details removes it again")
 assert(visibleRows()[1].label == "Fish", "back in its category")
+
+-- Modified clicks: the crafted item (shift links, ctrl previews), its
+-- reagents, and the recipe pattern.
+local clicked = {}
+HandleModifiedItemClick = function(link) clicked[#clicked + 1] = link return true end
+win.selTile.scripts.OnMouseUp(win.selTile)
+win.reagents[1].scripts.OnMouseUp(win.reagents[1])
+win.source.scripts.OnMouseUp(win.source)
+assert(clicked[1]:find("13927") and clicked[2]:find("13754") and clicked[3]:find("13939"),
+    "item, reagent and pattern clicks: " .. table.concat(clicked, " "))
 
 -- The Guild & Communities window (loaded on demand) gets a Marketplace tab.
 CommunitiesFrame = CreateFrame("Frame", "CommunitiesFrame")

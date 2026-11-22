@@ -95,7 +95,8 @@ function AH.ShoppingList(recipeName, missing, nameOf)
     end
     local listName = "Marketplace: " .. recipeName
     call("CreateShoppingList", listName, strings)
-    if AuctionHouseFrame and AuctionHouseFrame:IsShown() then
+    local ahFrame = AuctionHouseFrame or AuctionFrame -- retail-style or classic auction house
+    if ahFrame and ahFrame:IsShown() then
         call("MultiSearchExact", names)
     end
     return listName

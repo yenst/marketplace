@@ -101,6 +101,7 @@ end
 
 local events = CreateFrame("Frame")
 local handlers = {}
+local helloReady = false -- the login hello's wait is over
 
 function handlers.ADDON_LOADED(name)
     if name == ADDON then
@@ -117,7 +118,11 @@ function handlers.PLAYER_LOGIN()
     C_Timer.After(5, fixRealm)
     ns.Sync.RequestRoster()
     -- Give the guild roster and realm name a moment before saying hello.
-    C_Timer.After(10, function() ns.Sync.Announce(true) end)
+    C_Timer.After(10, function()
+        helloReady = true
+        ns.Sync.EnsureHello()
+        ns.Scanner.DropUnlearned(ns.char)
+    end)
 end
 
 function handlers.CHAT_MSG_ADDON(prefix, text, channel, sender)
@@ -137,12 +142,23 @@ end
 
 function handlers.PLAYER_GUILD_UPDATE()
     noteGuild()
+    if helloReady then
+        ns.Sync.EnsureHello() -- joined a guild mid-session
+    end
     ns.Refresh()
 end
 
 function handlers.GUILD_ROSTER_UPDATE()
     noteGuild()
+    if helloReady then
+        ns.Sync.EnsureHello()
+    end
     ns.Window.Refresh()
+end
+
+-- Quest titles (recipe sources) load on demand.
+function handlers.QUEST_DATA_LOAD_RESULT()
+    ns.Window.ItemDataArrived()
 end
 
 function handlers.GET_ITEM_INFO_RECEIVED()
@@ -154,7 +170,7 @@ handlers.TRADE_SKILL_LIST_UPDATE = handlers.TRADE_SKILL_SHOW
 handlers.TRADE_SKILL_DATA_SOURCE_CHANGED = handlers.TRADE_SKILL_SHOW
 
 for event in pairs(handlers) do
-    events:RegisterEvent(event)
+    pcall(events.RegisterEvent, events, event) -- some events don't exist on every client
 end
 events:SetScript("OnEvent", function(_, event, ...)
     handlers[event](...)
@@ -167,6 +183,7 @@ local HELP = {
     "/mkt status - what Marketplace knows about this character's professions",
     "/mkt guild - guildmates' professions received so far",
     "/mkt debug - show / hide guild sync activity in chat",
+    "/mkt minimap - show / hide the minimap button",
     "/mkt probe - check which profession and messaging APIs this client has",
     "/mkt probe trade - with a profession window open, save its recipe data for development",
 }
@@ -179,6 +196,7 @@ local COMMANDS = {
             ns.Print(line)
         end
     end,
+    minimap = function() ns.ToggleMinimapButton() end,
     debug = function()
         ns.db.settings.debug = not ns.db.settings.debug
         ns.Print("Sync debug output " .. (ns.db.settings.debug and "on" or "off") .. ".")

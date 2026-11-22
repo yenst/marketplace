@@ -9,5 +9,6 @@
 - Auctionator integration: reagent prices, mats cost, sell price, shopping lists.
 - Money shown with gold, silver and copper coin icons.
 - Favorite recipes, listed at the top.
-- Marketplace tab on the Guild & Communities window.
+- Marketplace tab on the Guild & Communities window, and a minimap button (`/mkt minimap`).
+- Shift-click the crafted item, a reagent or the recipe pattern to link it; ctrl-click to preview it.
 - Every recipe of every profession, including ones nobody in the guild has, with where to learn it (trainer, vendor zones, quests, drops, reputation). Data from WhatsTraining (MIT).

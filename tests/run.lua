@@ -166,15 +166,34 @@ test("Sync decoder drops incomplete or mismatched transfers", function()
     eq(ns.Sync.NewDecoder().Feed("B:1:abcd"), nil, "other protocol versions are ignored")
 end)
 
-test("Sync.Hash changes with recipes and skill", function()
+test("Sync.Hash changes with recipes, categories and max skill, not skill", function()
     local a = bigProfessions()
     local h = ns.Sync.Hash(a)
     a[129].skill = 181
-    assert(ns.Sync.Hash(a) ~= h, "skill change")
-    a[129].skill = 180
+    eq(ns.Sync.Hash(a), h, "levelling alone doesn't change it")
+    a[129].maxSkill = 300
+    assert(ns.Sync.Hash(a) ~= h, "max skill")
+    a[129].maxSkill = 225
     eq(ns.Sync.Hash(a), h, "back to the same")
     a[129].recipes[3276] = 0
     assert(ns.Sync.Hash(a) ~= h, "new recipe")
+    a[129].recipes[3276] = nil
+    a[129].categories[5] = { name = "x" }
+    assert(ns.Sync.Hash(a) ~= h, "category")
+end)
+
+test("Sync.Newer: newer stamp wins, ties by hash", function()
+    assert(ns.Sync.Newer({ hash = "aaaa", stamp = 2 }, { hash = "ffff", stamp = 1 }))
+    assert(ns.Sync.Newer({ hash = "ffff", stamp = 1 }, { hash = "aaaa", stamp = 1 }))
+    assert(not ns.Sync.Newer({ hash = "aaaa", stamp = 1 }, { hash = "ffff", stamp = 1 }))
+end)
+
+test("Scanner.DropUnlearned forgets professions only when the client agrees", function()
+    local char = { professions = { [164] = {}, [185] = {} } }
+    ns.Scanner.DropUnlearned(char, { [999] = true })
+    assert(char.professions[164] and char.professions[185], "no overlap: IDs differ, keep everything")
+    ns.Scanner.DropUnlearned(char, { [164] = true })
+    assert(char.professions[164] and not char.professions[185], "Cooking unlearned")
 end)
 
 test("Sync.Shareable leaves out professions without recipes", function()

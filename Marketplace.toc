@@ -21,5 +21,6 @@ Theme.lua
 Widgets.lua
 Window.lua
 GuildTab.lua
+Minimap.lua
 Probe.lua
 Core.lua
