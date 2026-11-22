@@ -660,18 +660,20 @@ local function buildDetail()
         row.class:SetPoint("LEFT", 18, 0)
         row.name = W.Text(row, 12)
         row.name:SetPoint("TOPLEFT", 46, -2)
-        row.name:SetPoint("RIGHT", -76, 0)
+        row.name:SetPoint("RIGHT", -32, 0)
         row.status = W.Text(row, 11, Theme.muted)
         row.status:SetPoint("BOTTOMLEFT", 46, 2)
-        row.status:SetPoint("RIGHT", -76, 0)
-        row.whisper = W.Button(row, "Whisper", 66, 20, function(self)
+        row.status:SetPoint("RIGHT", -32, 0)
+        row.whisper = W.IconButton(row, 24, "Interface\\ChatFrame\\UI-ChatIcon-Chat-Up", "W", function(self)
+            return "Whisper " .. (self.target or ""), "Opens a tell with the recipe link in it."
+        end, function(self)
             whisper(self.target, state.selected and recipeLink(state.selected))
         end)
         row.whisper:SetPoint("RIGHT")
         -- Click the name: only this member's patterns.
         row.pick = CreateFrame("Button", nil, row)
         row.pick:SetPoint("TOPLEFT")
-        row.pick:SetPoint("BOTTOMRIGHT", -76, 0)
+        row.pick:SetPoint("BOTTOMRIGHT", -32, 0)
         row.pick:SetScript("OnClick", function(self)
             if self.key then
                 setMember(self.key)
@@ -725,6 +727,18 @@ local function buildDetail()
     frame.source = source
 end
 
+-- "Shift [left mouse] link · Ctrl [left mouse] preview · [right mouse]
+-- favorite" with the game's mouse button icons; words if it lacks them.
+local function mouseHint()
+    local has = C_Texture and C_Texture.GetAtlasInfo
+    local left, right = "newplayertutorial-icon-mouse-leftbutton", "newplayertutorial-icon-mouse-rightbutton"
+    if not (has and has(left) and has(right)) then
+        return "Shift-click to link · ctrl-click to preview · right-click to favorite"
+    end
+    local l, r = "|A:" .. left .. ":16:12|a", "|A:" .. right .. ":16:12|a"
+    return string.format("Shift %s link   ·   Ctrl %s preview   ·   %s favorite", l, l, r)
+end
+
 local function buildFooter()
     local line = W.Line(frame.browse, Theme.border)
     line:SetPoint("BOTTOMLEFT", 0, 26)
@@ -733,7 +747,7 @@ local function buildFooter()
     frame.footer:SetPoint("BOTTOMLEFT", 12, 8)
     local hint = W.Text(frame.browse, 11, Theme.muted, "RIGHT")
     hint:SetPoint("BOTTOMRIGHT", -12, 8)
-    hint:SetText("Shift-click to link · ctrl-click to preview · right-click to favorite")
+    hint:SetText(mouseHint())
 end
 
 local function buildTabs()
@@ -966,8 +980,30 @@ local function drawReagents(meta)
     drawCosts(meta or {}, reagents, cost)
 end
 
--- "Trainer  12s 50c", "Vendor  Sold in Stormwind", … plus the recipe item's
--- auction price when it can be bought.
+-- The game's own icons for where a recipe comes from (gossip trainer and
+-- vendor icons, the quest "!", …) in place of the words.
+local SOURCE_ICONS = {
+    Trainer = "Interface\\GossipFrame\\TrainerGossipIcon",
+    Vendor = "Interface\\GossipFrame\\VendorGossipIcon",
+    Quest = "Interface\\GossipFrame\\AvailableQuestIcon",
+    Drop = "Interface\\Icons\\INV_Misc_Bone_HumanSkull_01",
+    Reputation = "Interface\\Icons\\INV_Misc_Note_02",
+    Known = "Interface\\Icons\\INV_Misc_Book_09",
+    Crafted = "Interface\\Icons\\INV_Misc_Gear_01",
+    World = "Interface\\Icons\\INV_Misc_Map_01",
+    Source = "Interface\\Icons\\INV_Misc_QuestionMark",
+}
+local FACTION_ICONS = {
+    ["Alliance only"] = "|TInterface\\TargetingFrame\\UI-PVP-Alliance:16:16:0:0:64:64:0:40:0:40|t",
+    ["Horde only"] = "|TInterface\\TargetingFrame\\UI-PVP-Horde:16:16:0:0:64:64:0:40:0:40|t",
+}
+
+local function inlineIcon(path)
+    return path and ("|T" .. path .. ":14:14:0:0|t") or ""
+end
+
+-- One line per source: "[vendor icon]  Sold in Stormwind", … plus the
+-- recipe item (its icon) and its auction price when it can be bought.
 local function drawSource(recipe)
     local entry = recipe.source
     local muted = Theme.Hex(Theme.muted)
@@ -979,13 +1015,20 @@ local function drawSource(recipe)
     end
     local lines = {}
     for _, l in ipairs(Data.Sources(entry, UnitFactionGroup and UnitFactionGroup("player"), sourceLookup)) do
-        lines[#lines + 1] = muted .. l.label .. "|r  " .. l.text
+        if l.label == "Faction" and FACTION_ICONS[l.text] then
+            lines[#lines + 1] = FACTION_ICONS[l.text] .. " " .. l.text
+        else
+            lines[#lines + 1] = inlineIcon(SOURCE_ICONS[l.label]) .. "  " .. l.text
+        end
     end
-    if entry.t and not entry.b then
-        local price = ns.AH.Available() and ns.AH.Price(entry.t)
-        lines[#lines + 1] = muted .. "Recipe item|r  " .. (price and ("on the auction house for " .. ns.AH.Money(price)) or "can be traded")
-    elseif entry.t then
-        lines[#lines + 1] = muted .. "Recipe item|r  binds when picked up"
+    if entry.t then
+        local icon = inlineIcon(itemIcon(entry.t) or SOURCE_ICONS.Source)
+        if not entry.b then
+            local price = ns.AH.Available() and ns.AH.Price(entry.t)
+            lines[#lines + 1] = icon .. "  " .. (price and ("Pattern on the auction house: " .. ns.AH.Money(price)) or "Pattern can be traded")
+        else
+            lines[#lines + 1] = icon .. "  " .. muted .. "Pattern binds when picked up|r"
+        end
     end
     frame.sourceText:SetText(table.concat(lines, "\n"))
 end
@@ -1026,7 +1069,15 @@ function Window.DrawDetail()
             setClassIcon(row.class, c.class)
             row.class:SetDesaturated(not onlineState)
             row.class:SetAlpha(onlineState and 1 or 0.6)
-            row.status:SetText(Data.StatusText(c, time()))
+            local status = Data.StatusText(c, time())
+            row.status:SetText(status)
+            row.name:ClearAllPoints()
+            row.name:SetPoint("RIGHT", -32, 0)
+            if status == "" then
+                row.name:SetPoint("LEFT", 46, 0) -- online: the dot says it
+            else
+                row.name:SetPoint("TOPLEFT", 46, -2)
+            end
             row.whisper.target = c.name
             row.pick.key, row.pick.name = c.key, c.name
             row.whisper:SetShown(c.state == "addon" or c.state == "noaddon")

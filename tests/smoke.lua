@@ -436,7 +436,7 @@ assert(win.reagents[1].shown and win.reagents[1].count.text == "1/1", "reagent w
 assert(win.crafters[1].name.text == "Dan", "Dan listed as crafter")
 assert(not win.nobody.shown, "has crafters")
 assert(win.crafters[1].class.shown, "class icon next to Dan")
-assert(win.sourceText.text:find("Vendor") and win.sourceText.text:find("Zone 440"), "sold in Tanaris: " .. win.sourceText.text)
+assert(win.sourceText.text:find("VendorGossipIcon") and win.sourceText.text:find("Sold in Zone 440"), "sold in Tanaris: " .. win.sourceText.text)
 win.crafters[1].whisper.scripts.OnClick(win.crafters[1].whisper)
 assert(told == "Dan" and inserted:find("Henchant:18238"), "whisper opens a tell with the recipe link")
 

@@ -420,9 +420,9 @@ end)
 
 test("Data.StatusText", function()
     eq(ns.Data.StatusText({ state = "you" }), "You")
-    eq(ns.Data.StatusText({ state = "addon" }), "Online")
-    eq(ns.Data.StatusText({ state = "offline", lastOnline = 2 * 86400 }), "Offline · seen 2d ago")
-    eq(ns.Data.StatusText({ state = "offline", updated = 1000 }, 1000 + 5 * 3600), "Offline · seen 5h ago")
+    eq(ns.Data.StatusText({ state = "addon" }), "", "online: the dot says it")
+    eq(ns.Data.StatusText({ state = "offline", lastOnline = 2 * 86400 }), "Seen 2d ago")
+    eq(ns.Data.StatusText({ state = "offline", updated = 1000 }, 1000 + 5 * 3600), "Seen 5h ago")
     eq(ns.Data.StatusText({ state = "offline", mine = true }), "Your character")
 end)
 

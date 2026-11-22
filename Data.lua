@@ -335,14 +335,13 @@ function Data.CrafterText(row)
     return ""
 end
 
--- Status line under a crafter's name.
+-- Status line under a crafter's name (nothing when online: the green dot
+-- and coloured name say it; offline: when they were last seen).
 function Data.StatusText(crafter, now)
     if crafter.state == "you" then
         return "You"
-    elseif crafter.state == "addon" then
-        return "Online"
-    elseif crafter.state == "noaddon" then
-        return "Online"
+    elseif crafter.state == "addon" or crafter.state == "noaddon" then
+        return "" -- the green dot says it
     end
     local ago = crafter.lastOnline
     if not ago and crafter.updated and now then
@@ -351,7 +350,7 @@ function Data.StatusText(crafter, now)
     if not ago then
         return crafter.mine and "Your character" or "Offline"
     end
-    return (crafter.mine and "Your character · " or "Offline · ") .. "seen " .. Data.Ago(ago) .. " ago"
+    return (crafter.mine and "Your character · seen " or "Seen ") .. Data.Ago(ago) .. " ago"
 end
 
 -- Seconds as "5m", "3h", "2d".

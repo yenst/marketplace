@@ -3,6 +3,7 @@
 ## 0.1.1-beta (unreleased)
 
 - Class icons next to player names.
+- Icons instead of words where the game uses them: recipe sources (trainer, vendor, quest, drop…), the faction crest, the whisper button and the mouse hints; online crafters no longer say "Online" under their name.
 - Member filter: pick a guildmate from the dropdown next to the search (or click a crafter's name) to see only their patterns.
 - Your professions are shared at login and when you learn a recipe, without opening the profession windows first. (Opening a window still adds its category grouping.)
 
