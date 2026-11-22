@@ -727,16 +727,14 @@ local function buildDetail()
     frame.source = source
 end
 
--- "Shift [left mouse] link · Ctrl [left mouse] preview · [right mouse]
--- favorite" with the game's mouse button icons; words if it lacks them.
+-- "[right mouse] favorite" with the game's mouse button icon (words if
+-- the client lacks it). Linking and previewing work as anywhere else.
 local function mouseHint()
-    local has = C_Texture and C_Texture.GetAtlasInfo
-    local left, right = "newplayertutorial-icon-mouse-leftbutton", "newplayertutorial-icon-mouse-rightbutton"
-    if not (has and has(left) and has(right)) then
-        return "Shift-click to link · ctrl-click to preview · right-click to favorite"
+    local right = "newplayertutorial-icon-mouse-rightbutton"
+    if C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(right) then
+        return "|A:" .. right .. ":16:12|a favorite"
     end
-    local l, r = "|A:" .. left .. ":16:12|a", "|A:" .. right .. ":16:12|a"
-    return string.format("Shift %s link   ·   Ctrl %s preview   ·   %s favorite", l, l, r)
+    return "Right-click to favorite"
 end
 
 local function buildFooter()
