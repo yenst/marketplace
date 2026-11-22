@@ -463,6 +463,18 @@ test("Data.Index adds catalog recipes nobody has", function()
     end
 end)
 
+test("Data.Coverage counts patterns the guild knows", function()
+    local recipes = {
+        [1] = { prof = 164, crafters = { {} } },
+        [2] = { prof = 164, crafters = {} },
+        [3] = { prof = 185, crafters = { {} } },
+    }
+    local known, total = ns.Data.Coverage(recipes, 164)
+    eq(known, 1); eq(total, 2)
+    known, total = ns.Data.Coverage(recipes, "all")
+    eq(known, 2); eq(total, 3)
+end)
+
 test("Data.Sources says where to learn a recipe", function()
     local lookup = {
         zone = function(a) return ({ [1519] = "Stormwind City", [1637] = "Orgrimmar", [440] = "Tanaris" })[a] end,

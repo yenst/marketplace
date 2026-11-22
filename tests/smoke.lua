@@ -408,7 +408,7 @@ local tabsShown = 0
 for _, tab in ipairs(win.tabs) do if tab.shown then tabsShown = tabsShown + 1 end end
 assert(tabsShown == 10, "tabs: All plus the 9 crafting professions (got " .. tabsShown .. ")")
 for _, tab in ipairs(win.tabs) do if tab.title == "Alchemy" then tab.scripts.OnClick(tab) end end
-assert(win.headTitle.text == "Alchemy" and win.barText.text == "0 of 0 crafters online", "header for an empty profession")
+assert(win.headTitle.text == "Alchemy" and win.barText.text:find("^0 of %d+ patterns unlocked$"), "header: " .. win.barText.text)
 -- Nobody has Alchemy: its whole catalog sits under a collapsed group.
 rows = visibleRows()
 assert(#rows == 1 and rows[1].header and rows[1].label == "Not in your guild" and rows[1].collapsed and rows[1].count > 100,

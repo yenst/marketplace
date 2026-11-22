@@ -688,34 +688,21 @@ local function drawTabs()
     end
 end
 
+-- Header: the profession, and a bar of how many of its patterns the guild
+-- has unlocked (someone can craft them) out of all there are.
 local function drawHeader()
-    local onlineNow, total = 0, 0
-    local crafters = {}
     if state.prof == "all" then
-        for _, c in ipairs(model.crafters) do
-            if next(c.professions) then
-                crafters[#crafters + 1] = c
-            end
-        end
         frame.headTitle:SetText("All professions")
         frame.headIcon:SetTexture(ns.ICON)
     else
         local p = model.tabs[state.prof]
-        for _, c in pairs(p.crafters) do
-            crafters[#crafters + 1] = c
-        end
         frame.headTitle:SetText(p.name)
         frame.headIcon:SetTexture(professionTexture(p.id) or ns.ICON)
     end
-    for _, c in ipairs(crafters) do
-        total = total + 1
-        if Data.IsOnline(c.state) then
-            onlineNow = onlineNow + 1
-        end
-    end
-    frame.barFill:SetShown(onlineNow > 0)
-    frame.barFill:SetWidth(math.max(1, 298 * (total > 0 and onlineNow / total or 0)))
-    frame.barText:SetText(string.format("%d of %s online", onlineNow, ns.Plural(total, "crafter")))
+    local known, total = Data.Coverage(model.recipes, state.prof)
+    frame.barFill:SetShown(known > 0)
+    frame.barFill:SetWidth(math.max(1, 298 * (total > 0 and known / total or 0)))
+    frame.barText:SetText(string.format("%d of %d patterns unlocked", known, total))
 end
 
 function Window.DrawList()

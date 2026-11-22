@@ -275,6 +275,21 @@ function Data.List(recipes, filter, metaOf, itemName)
     return items, count
 end
 
+-- Patterns the guild knows (someone can craft them) out of all there are,
+-- for one profession or "all": known, total.
+function Data.Coverage(recipes, prof)
+    local known, total = 0, 0
+    for _, r in pairs(recipes) do
+        if prof == "all" or r.prof == prof then
+            total = total + 1
+            if #r.crafters > 0 then
+                known = known + 1
+            end
+        end
+    end
+    return known, total
+end
+
 -- "2 · 1 online", "3 · offline", "Skill 165" (nobody has it)
 function Data.CrafterText(row)
     if row.total == 0 then
