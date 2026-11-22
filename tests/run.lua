@@ -481,6 +481,22 @@ test("Scanner.QuietScan finds learned recipes without the window", function()
     assert(not ns.Scanner.QuietScan(char, infos, T, catalog, 124), "second run: nothing new")
 end)
 
+test("Member filter: one guildmate's patterns", function()
+    local recipes = ns.Data.Index(ns.Data.Crafters(ctx()))
+    local items = ns.Data.List(recipes, { prof = 164, member = "Fenna Frost" }, metaOf, itemName)
+    local names = {}
+    for _, item in ipairs(items) do
+        if not item.header then names[#names + 1] = item.name end
+    end
+    eq(table.concat(names, ","), "Imperial Plate", "only Fenna's recipe")
+    local known, total = ns.Data.Coverage(recipes, 164, "Kael Sun")
+    eq(known, 2); eq(total, 3)
+    local members = ns.Data.Members(recipes, 164)
+    local list = {}
+    for _, m in ipairs(members) do list[#list + 1] = m.name .. "=" .. m.count end
+    eq(table.concat(list, ","), "Billy Joel=2,Dan Pal=1,Fenna Frost=1,Kael Sun=2")
+end)
+
 test("Data.Coverage counts patterns the guild knows", function()
     local recipes = {
         [1] = { prof = 164, crafters = { {} } },

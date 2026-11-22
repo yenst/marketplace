@@ -20,6 +20,7 @@ local CRAFTER_HEIGHT, CRAFTER_ROWS = 30, 4
 local SOURCE_TOP = 18 + CRAFTER_ROWS * CRAFTER_HEIGHT + 10
 local REAGENT_SLOTS, REAGENT_ROW = 8, 38
 local TAB_SIZE, MAX_TABS = 36, 12
+local MEMBER_ROWS = 12
 local STAT_WIDTH = 120
 local AUCTIONATOR_LOGO = "Interface\\AddOns\\Auctionator\\Images\\Logo"
 local STAT_ICONS = {
@@ -279,6 +280,52 @@ local function buildHeader()
     line:SetPoint("TOPRIGHT", -PAD, -94)
 end
 
+-- Sets (or with nil clears) the member filter.
+local function setMember(key)
+    state.member, state.offset = key, 0
+    if frame.memberMenu then
+        frame.memberMenu:Hide()
+    end
+    Window.Refresh()
+end
+
+local function buildMemberMenu()
+    local menu = W.Panel(frame.browse, { 0.04, 0.06, 0.08, 1 })
+    menu:SetSize(220, MEMBER_ROWS * ROW_HEIGHT + 8)
+    menu:SetFrameStrata("FULLSCREEN_DIALOG")
+    menu:EnableMouse(true)
+    menu:EnableMouseWheel(true)
+    menu:Hide()
+    menu.offset = 0
+    menu:SetScript("OnMouseWheel", function(self, delta)
+        self.offset = math.max(0, math.min(math.max(0, #(self.entries or {}) - MEMBER_ROWS), self.offset - delta * 3))
+        Window.DrawMemberMenu()
+    end)
+    menu.rows = {}
+    for i = 1, MEMBER_ROWS do
+        local row = CreateFrame("Button", nil, menu)
+        row:SetHeight(ROW_HEIGHT)
+        row:SetPoint("TOPLEFT", 4, -4 - (i - 1) * ROW_HEIGHT)
+        row:SetPoint("TOPRIGHT", -4, -4 - (i - 1) * ROW_HEIGHT)
+        row.hover = hoverTexture(row)
+        row.dot = row:CreateTexture(nil, "ARTWORK")
+        row.dot:SetSize(6, 6)
+        row.dot:SetPoint("LEFT", 6, 0)
+        row.dot:SetColorTexture(unpack(Theme.online))
+        row.label = W.Text(row, 12)
+        row.label:SetPoint("LEFT", 18, 0)
+        row.label:SetPoint("RIGHT", -40, 0)
+        row.count = W.Text(row, 11, Theme.muted, "RIGHT")
+        row.count:SetPoint("RIGHT", -6, 0)
+        row:SetScript("OnEnter", function(self) self.hover:Show() end)
+        row:SetScript("OnLeave", function(self) self.hover:Hide() end)
+        row:SetScript("OnClick", function(self) setMember(self.key or nil) end)
+        menu.rows[i] = row
+    end
+    frame.memberMenu = menu
+    frame:HookScript("OnHide", function() menu:Hide() end)
+end
+
 local function buildFilters()
     -- Redraw once typing pauses: every search scans the whole catalog.
     local searchToken
@@ -293,12 +340,28 @@ local function buildFilters()
         end)
     end)
     frame.search:SetPoint("TOPLEFT", PAD, -102)
+    frame.search:SetWidth(360)
+
+    -- Member filter: only one guildmate's patterns.
+    frame.member = W.Button(frame.browse, "All members", 170, 24, function()
+        Window.ToggleMemberMenu()
+    end)
+    frame.member:SetPoint("LEFT", frame.search, "RIGHT", 10, 0)
+    frame.member.text:ClearAllPoints()
+    frame.member.text:SetPoint("LEFT", 10, 0)
+    frame.member.text:SetPoint("RIGHT", -22, 0)
+    frame.member.text:SetJustifyH("LEFT")
+    local arrow = frame.member:CreateTexture(nil, "ARTWORK")
+    arrow:SetSize(14, 14)
+    arrow:SetPoint("RIGHT", -6, 0)
+    arrow:SetTexture("Interface\\Buttons\\Arrow-Down-Up")
+    buildMemberMenu()
     local online = W.Toggle(frame.browse, "Online only", function() return state.onlineOnly end, function(v)
         state.onlineOnly, state.offset = v, 0
         Window.Refresh()
     end)
     online:SetWidth(120)
-    online:SetPoint("LEFT", frame.search, "RIGHT", 14, 0)
+    online:SetPoint("LEFT", frame.member, "RIGHT", 14, 0)
 end
 
 local function buildList()
@@ -568,6 +631,21 @@ local function buildDetail()
             whisper(self.target, state.selected and recipeLink(state.selected))
         end)
         row.whisper:SetPoint("RIGHT")
+        -- Click the name: only this member's patterns.
+        row.pick = CreateFrame("Button", nil, row)
+        row.pick:SetPoint("TOPLEFT")
+        row.pick:SetPoint("BOTTOMRIGHT", -76, 0)
+        row.pick:SetScript("OnClick", function(self)
+            if self.key then
+                setMember(self.key)
+            end
+        end)
+        row.pick:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:AddLine("Show only " .. (self.name or "their") .. "'s patterns", 1, 1, 1)
+            GameTooltip:Show()
+        end)
+        row.pick:SetScript("OnLeave", function() GameTooltip:Hide() end)
         frame.crafters[i] = row
     end
     frame.nobody = W.Text(right, 12, Theme.muted)
@@ -699,10 +777,14 @@ local function drawHeader()
         frame.headTitle:SetText(p.name)
         frame.headIcon:SetTexture(professionTexture(p.id) or ns.ICON)
     end
-    local known, total = Data.Coverage(model.recipes, state.prof)
+    local known, total = Data.Coverage(model.recipes, state.prof, state.member)
     frame.barFill:SetShown(known > 0)
     frame.barFill:SetWidth(math.max(1, 298 * (total > 0 and known / total or 0)))
-    frame.barText:SetText(string.format("%d of %d patterns unlocked", known, total))
+    if state.member then
+        frame.barText:SetText(string.format("%s knows %d of %d patterns", state.memberName or state.member, known, total))
+    else
+        frame.barText:SetText(string.format("%d of %d patterns unlocked", known, total))
+    end
 end
 
 function Window.DrawList()
@@ -758,6 +840,8 @@ function Window.DrawList()
     elseif count == 0 and state.prof ~= "all" and (state.query or "") == "" and not state.onlineOnly then
         local p = model.tabs and model.tabs[state.prof]
         frame.empty:SetText("Nobody in your guild has shared " .. (p and p.name or "this profession") .. " yet.")
+    elseif count == 0 and state.member then
+        frame.empty:SetText((state.memberName or state.member) .. " has no patterns here.")
     elseif count == 0 then
         frame.empty:SetText("No recipe matches.")
     else
@@ -904,12 +988,54 @@ function Window.DrawDetail()
             row.name:SetTextColor(unpack(onlineState and classColor(c.class) or Theme.muted))
             row.status:SetText(Data.StatusText(c, time()))
             row.whisper.target = c.name
+            row.pick.key, row.pick.name = c.key, c.name
             row.whisper:SetShown(c.state == "addon" or c.state == "noaddon")
         end
     end
     frame.crafterMore:SetText(#list > CRAFTER_ROWS and string.format("%d of %d  (scroll)", math.min(#list, state.crafterOffset + CRAFTER_ROWS), #list) or "")
     frame.nobody:SetShown(#list == 0)
     drawSource(recipe)
+end
+
+function Window.DrawMemberMenu()
+    local menu = frame.memberMenu
+    if not menu:IsShown() then
+        return
+    end
+    local entries = { { name = "All members" } }
+    for _, m in ipairs(Data.Members(model.recipes, state.prof)) do
+        entries[#entries + 1] = m
+    end
+    menu.entries = entries
+    local rows = math.min(#entries, MEMBER_ROWS)
+    menu:SetHeight(rows * ROW_HEIGHT + 8)
+    menu.offset = math.max(0, math.min(menu.offset, #entries - MEMBER_ROWS))
+    for i, row in ipairs(menu.rows) do
+        local e = entries[menu.offset + i]
+        row:SetShown(e ~= nil)
+        if e then
+            row.key = e.key or false -- false: "All members"
+            row.label:SetText(e.name)
+            local selected = e.key == state.member
+            row.label:SetTextColor(unpack(e.key and classColor(e.class) or Theme.text))
+            row.label:SetAlpha((selected or not state.member and not e.key) and 1 or 0.85)
+            row.count:SetText(e.count and tostring(e.count) or "")
+            row.dot:SetShown(e.state ~= nil and Data.IsOnline(e.state))
+        end
+    end
+end
+
+function Window.ToggleMemberMenu()
+    local menu = frame.memberMenu
+    if menu:IsShown() then
+        menu:Hide()
+        return
+    end
+    menu:ClearAllPoints()
+    menu:SetPoint("TOPLEFT", frame.member, "BOTTOMLEFT", 0, -2)
+    menu.offset = 0
+    menu:Show()
+    Window.DrawMemberMenu()
 end
 
 local function drawFooter()
@@ -933,6 +1059,13 @@ function Window.Refresh()
     gather()
     drawTabs()
     state.favorites = ns.db.favorites
+    state.memberName = nil
+    for _, c in ipairs(model.crafters) do
+        if c.key == state.member then
+            state.memberName = c.name
+        end
+    end
+    frame.member:SetLabel(state.memberName or (state.member or "All members"))
     model.items, model.count = Data.List(model.recipes, state, function(id) return ns.Scanner.Meta(id) end, itemName)
     if not state.selected or not model.recipes[state.selected] then
         state.selected = nil
@@ -947,6 +1080,7 @@ function Window.Refresh()
     Window.DrawList()
     Window.DrawDetail()
     drawFooter()
+    Window.DrawMemberMenu()
 end
 
 -- Item names and icons load lazily; redraw once a burst of them arrived.

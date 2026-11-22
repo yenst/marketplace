@@ -201,6 +201,7 @@ Data.NOBODY = "Not in your guild"
 -- recipes nobody in the guild has go under "Not in your guild" at the
 -- bottom, by required skill (in All professions only when searching).
 --   filter = { prof = "all" | profID, query, onlineOnly, collapsed = { [header] = true },
+--              member = crafter key (only that member's patterns) or nil,
 --              favorites = { [recipeID] = true } }
 --   metaOf(recipeID) -> { name, item, reagents } (name may be nil while loading)
 --   itemName(itemID) -> name or nil
@@ -213,7 +214,8 @@ function Data.List(recipes, filter, metaOf, itemName)
     for id, r in pairs(recipes) do
         local nobody = #r.crafters == 0
         -- Cheap checks first: the catalog has ~2000 recipes.
-        if (filter.prof == "all" or filter.prof == r.prof) and not (nobody and filter.prof == "all" and query == "") then
+        if (filter.prof == "all" or filter.prof == r.prof) and not (nobody and filter.prof == "all" and query == "")
+            and (not filter.member or Data.Knows(r, filter.member)) then
             local on = 0
             for _, c in ipairs(r.crafters) do
                 if online(c.state) then
@@ -275,19 +277,53 @@ function Data.List(recipes, filter, metaOf, itemName)
     return items, count
 end
 
--- Patterns the guild knows (someone can craft them) out of all there are,
--- for one profession or "all": known, total.
-function Data.Coverage(recipes, prof)
+-- Whether the member (crafter key) can craft a recipe.
+function Data.Knows(recipe, member)
+    for _, c in ipairs(recipe.crafters) do
+        if c.key == member then
+            return true
+        end
+    end
+    return false
+end
+
+-- Patterns the guild (or one member) knows out of all there are, for one
+-- profession or "all": known, total.
+function Data.Coverage(recipes, prof, member)
     local known, total = 0, 0
     for _, r in pairs(recipes) do
         if prof == "all" or r.prof == prof then
             total = total + 1
-            if #r.crafters > 0 then
+            if (member and Data.Knows(r, member)) or (not member and #r.crafters > 0) then
                 known = known + 1
             end
         end
     end
     return known, total
+end
+
+-- Members for the member filter, by name: those with any patterns in the
+-- profession (or any at all). { { key, name, class, state, count } }
+function Data.Members(recipes, prof)
+    local byKey = {}
+    for _, r in pairs(recipes) do
+        if prof == "all" or r.prof == prof then
+            for _, c in ipairs(r.crafters) do
+                local m = byKey[c.key]
+                if not m then
+                    m = { key = c.key, name = c.name, class = c.class, state = c.state, count = 0 }
+                    byKey[c.key] = m
+                end
+                m.count = m.count + 1
+            end
+        end
+    end
+    local list = {}
+    for _, m in pairs(byKey) do
+        list[#list + 1] = m
+    end
+    table.sort(list, function(a, b) return a.name < b.name end)
+    return list
 end
 
 -- Right-hand text of a recipe row: "Skill 165" when nobody has it, else

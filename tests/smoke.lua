@@ -487,6 +487,27 @@ win.favorite.scripts.OnClick(win.favorite)
 assert(not MarketplaceDB.favorites[18238], "star in the details removes it again")
 assert(visibleRows()[1].label == "Fish", "back in its category")
 
+-- Member filter: pick Dan from the dropdown, then clear it again.
+win.member.scripts.OnClick(win.member)
+assert(win.memberMenu.shown and win.memberMenu.rows[1].label.text == "All members", "member menu")
+local danRow
+for _, row in ipairs(win.memberMenu.rows) do if row.shown and row.label.text == "Dan" then danRow = row end end
+assert(danRow and danRow.count.text == "1", "Dan in the menu with 1 pattern here")
+danRow.scripts.OnClick(danRow)
+assert(not win.memberMenu.shown and win.member.text.text == "Dan", "filtered to Dan")
+assert(win.barText.text:find("^Dan knows 1 of %d+ patterns$"), "header: " .. win.barText.text)
+for _, item in ipairs(visibleRows()) do
+    assert(item.header or item.recipe.id == 18238, "only Dan's patterns")
+end
+win.member.scripts.OnClick(win.member)
+win.memberMenu.rows[1].scripts.OnClick(win.memberMenu.rows[1])
+assert(win.member.text.text == "All members", "filter cleared")
+-- Clicking a crafter's name in the details filters to them too.
+win.crafters[1].pick.scripts.OnClick(win.crafters[1].pick)
+assert(win.member.text.text == "Dan", "crafter name filters")
+win.member.scripts.OnClick(win.member)
+win.memberMenu.rows[1].scripts.OnClick(win.memberMenu.rows[1])
+
 -- Modified clicks: the crafted item (shift links, ctrl previews), its
 -- reagents, and the recipe pattern.
 local clicked = {}
