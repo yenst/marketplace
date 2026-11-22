@@ -4,6 +4,7 @@
 ## Author: yenst
 ## Version: @project-version@
 ## X-License: MIT
+## X-Curse-Project-ID: 1823257
 ## X-Website: https://github.com/yenst/marketplace
 ## IconTexture: Interface\AddOns\Marketplace\Media\icon
 ## SavedVariables: MarketplaceDB

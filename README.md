@@ -11,7 +11,7 @@ Slash command: `/marketplace` (or `/mkt`).
 
 ## Status
 
-In development: the guild browser works; testing in game.
+Beta: on [CurseForge](https://www.curseforge.com/wow/addons/marketplace) (project 1823257). Guild sync is new; reports welcome in the issues.
 
 ## Credits
 
