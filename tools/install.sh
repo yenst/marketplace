@@ -25,7 +25,7 @@ for flavor in _forever_; do
         ln -s "$repo" "$addons/Marketplace"
     else
         mkdir "$addons/Marketplace"
-        cp -r "$repo"/Marketplace.toc "$repo"/*.lua "$repo"/embeds.xml "$repo"/licenses "$addons/Marketplace/"
+        cp -r "$repo"/Marketplace.toc "$repo"/*.lua "$repo"/embeds.xml "$repo"/licenses "$repo"/Media "$addons/Marketplace/"
         if [[ -d "$repo/Libs" ]]; then
             cp -r "$repo/Libs" "$addons/Marketplace/"
         fi

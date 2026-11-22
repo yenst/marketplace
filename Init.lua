@@ -3,7 +3,7 @@ local ADDON, ns = ...
 ns.name = ADDON
 ns.TITLE = "Marketplace"
 -- Placeholder until the addon has its own icon in Media/.
-ns.ICON = "Interface\\Icons\\INV_Misc_Coin_01"
+ns.ICON = "Interface\\AddOns\\Marketplace\\Media\\icon"
 
 local listeners = {}
 
