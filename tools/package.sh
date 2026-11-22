@@ -27,7 +27,7 @@ sed "s/@project-version@/$version/" Marketplace.toc > "$dest/Marketplace.toc"
 # Every file the .toc loads, plus what the client reads on its own.
 grep -E '\.(lua|xml)$' Marketplace.toc | while read -r file; do cp "$file" "$dest/"; done
 cp LICENSE "$dest/"
-cp -r Libs "$dest/"
+cp -r Libs Media licenses "$dest/"
 
 mkdir -p dist
 zip_path="dist/Marketplace-$version.zip"

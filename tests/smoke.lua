@@ -510,13 +510,34 @@ win.memberMenu.rows[1].scripts.OnClick(win.memberMenu.rows[1])
 
 -- Modified clicks: the crafted item (shift links, ctrl previews), its
 -- reagents, and the recipe pattern.
-local clicked = {}
-HandleModifiedItemClick = function(link) clicked[#clicked + 1] = link return true end
+local clicked, dressed = {}, {}
+local modifier = "CHATLINK"
+IsModifiedClick = function(kind) return kind == modifier end
+C_Item.GetItemInfo = function(id) return "Item " .. id, "|cffffffff|Hitem:" .. id .. "::::::::|h[Item " .. id .. "]|h|r" end
+ChatEdit_InsertLink = function(link) clicked[#clicked + 1] = link return true end
+DressUpItemLink = function(link) dressed[#dressed + 1] = link end
 win.selTile.scripts.OnMouseUp(win.selTile)
 win.reagents[1].scripts.OnMouseUp(win.reagents[1])
 win.source.scripts.OnMouseUp(win.source)
-assert(clicked[1]:find("13927") and clicked[2]:find("13754") and clicked[3]:find("13939"),
-    "item, reagent and pattern clicks: " .. table.concat(clicked, " "))
+assert(clicked[1]:find("|Hitem:13927:") and clicked[2]:find("|Hitem:13754:") and clicked[3]:find("|Hitem:13939:"),
+    "item, reagent and pattern linked: " .. table.concat(clicked, " "))
+modifier = "DRESSUP"
+win.selTile.scripts.OnMouseUp(win.selTile)
+assert(dressed[1] and dressed[1]:find("|Hitem:13927:"), "ctrl-click previews the item")
+-- Not loaded yet: the link goes in once the item has loaded, never as "item:123".
+modifier = "CHATLINK"
+C_Item.GetItemInfo = function() return nil end
+local waiting
+Item = { CreateFromItemID = function(_, id)
+    return { ContinueOnItemLoad = function(_, fn) waiting = fn end,
+             GetItemLink = function() return "|cffffffff|Hitem:" .. id .. "::::::::|h[Item " .. id .. "]|h|r" end }
+end }
+clicked = {}
+win.selTile.scripts.OnMouseUp(win.selTile)
+assert(#clicked == 0 and waiting, "waits for the item")
+waiting()
+assert(clicked[1] and clicked[1]:find("|Hitem:13927:"), "then links the real item")
+Item, IsModifiedClick = nil, nil
 
 -- The Guild & Communities window (loaded on demand) gets a Marketplace tab.
 CommunitiesFrame = CreateFrame("Frame", "CommunitiesFrame")

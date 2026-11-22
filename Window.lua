@@ -63,30 +63,49 @@ local function itemCount(id)
     return GetItemCount and GetItemCount(id, true) or 0
 end
 
+-- An item's real chat link, or nil while the client hasn't loaded it.
 local function itemLink(id)
-    if not id then
-        return nil
+    local getInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+    return id and getInfo and select(2, getInfo(id)) or nil
+end
+
+-- Calls fn(link) with the item's chat link: now if it's loaded, else once
+-- the client has loaded it (never with a bare "item:123").
+local function withItemLink(id, fn)
+    local link = itemLink(id)
+    if link then
+        fn(link)
+    elseif Item and Item.CreateFromItemID then
+        local item = Item:CreateFromItemID(id)
+        item:ContinueOnItemLoad(function()
+            local loaded = item:GetItemLink() or itemLink(id)
+            if loaded then
+                fn(loaded)
+            end
+        end)
     end
-    local link = GetItemInfo and select(2, GetItemInfo(id))
-    return link or ("item:" .. id)
 end
 
 -- Shift-click links the item in chat, ctrl-click previews it in the
--- dressing room (Blizzard's handler, or the same by hand).
+-- dressing room. The modifier is read now; the link may come a moment
+-- later if the item still has to load.
 local function modifiedItemClick(id)
-    local link = itemLink(id)
-    if not link then
-        return false
+    if not (id and IsModifiedClick) then
+        return
     end
-    if HandleModifiedItemClick then
-        return HandleModifiedItemClick(link)
+    if IsModifiedClick("CHATLINK") then
+        withItemLink(id, function(link)
+            if ChatEdit_InsertLink then
+                ChatEdit_InsertLink(link)
+            end
+        end)
+    elseif IsModifiedClick("DRESSUP") then
+        withItemLink(id, function(link)
+            if DressUpItemLink then
+                DressUpItemLink(link)
+            end
+        end)
     end
-    if IsModifiedClick and IsModifiedClick("CHATLINK") and ChatEdit_InsertLink then
-        return ChatEdit_InsertLink(link)
-    elseif IsModifiedClick and IsModifiedClick("DRESSUP") and DressUpItemLink then
-        return DressUpItemLink(link)
-    end
-    return false
 end
 
 local function recipeLink(id)
