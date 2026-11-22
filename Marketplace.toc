@@ -12,6 +12,7 @@
 embeds.xml
 
 Init.lua
+RecipeDB.lua
 Scanner.lua
 Sync.lua
 Data.lua

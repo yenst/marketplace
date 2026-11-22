@@ -110,7 +110,7 @@ function Scanner.Meta(id)
     local T = C_TradeSkillUI
     local info = T and T.GetRecipeInfo and T.GetRecipeInfo(id)
     if not info or not info.name then
-        return nil
+        return Scanner.CatalogMeta(id)
     end
     local schematic = T.GetRecipeSchematic and T.GetRecipeSchematic(id, false)
     local meta = {
@@ -121,6 +121,32 @@ function Scanner.Meta(id)
         reagents = reagentsOf(schematic),
     }
     cache[id] = meta
+    return meta
+end
+
+-- For recipes the client can't describe: name from the spell, output from
+-- the recipe catalog (RecipeDB). Not saved; reagents stay unknown.
+local catalogIndex, catalogMeta = nil, {}
+function Scanner.CatalogMeta(id)
+    if catalogMeta[id] then
+        return catalogMeta[id]
+    end
+    catalogIndex = catalogIndex or ns.Data.CatalogIndex(ns.RecipeDB)
+    local found = catalogIndex[id]
+    if not found then
+        return nil
+    end
+    local name
+    if C_Spell and C_Spell.GetSpellInfo then
+        local spell = C_Spell.GetSpellInfo(id)
+        name = type(spell) == "table" and spell.name or spell
+    elseif GetSpellInfo then
+        name = GetSpellInfo(id)
+    end
+    local meta = { name = name, item = found.entry.c, prof = found.prof, cat = 0, reagents = {} }
+    if name then
+        catalogMeta[id] = meta
+    end
     return meta
 end
 

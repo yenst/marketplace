@@ -426,6 +426,55 @@ test("Data.List favorites", function()
     eq(items[3].label, "Blacksmithing")
 end)
 
+
+test("Data.Index adds catalog recipes nobody has", function()
+    local catalog = { [185] = { [7] = { s = 1, src = "t" }, [8] = { s = 50, src = "v" } }, [356] = { [9] = { s = 1 } } }
+    local recipes = ns.Data.Index(ns.Data.Crafters(ctx()), catalog, { [185] = "Cooking" })
+    eq(#recipes[7].crafters, 1, "the alt's Chili keeps its crafter")
+    eq(recipes[7].skill, 1)
+    eq(#recipes[8].crafters, 0, "nobody has recipe 8")
+    eq(recipes[8].profName, "Cooking")
+    eq(recipes[9], nil, "gathering professions are left out")
+    local items = ns.Data.List(recipes, { prof = 185 }, metaOf, itemName)
+    eq(items[#items - 1].label, ns.Data.NOBODY, "nobody's recipes come last")
+    eq(ns.Data.CrafterText(items[#items]), "Skill 50")
+    local all = ns.Data.List(recipes, { prof = "all" }, metaOf, itemName)
+    for _, item in ipairs(all) do
+        assert(item.label ~= ns.Data.NOBODY, "not in All professions unless searching")
+    end
+end)
+
+test("Data.Sources says where to learn a recipe", function()
+    local lookup = {
+        zone = function(a) return ({ [1519] = "Stormwind City", [1637] = "Orgrimmar", [440] = "Tanaris" })[a] end,
+        quest = function(id) return id == 7 and "A Fishy Peril" or nil end,
+        factionName = function(id) return id == 529 and "Argent Dawn" or nil end,
+        standing = function(n) return ({ [6] = "Honored" })[n] end,
+        money = function(c) return c .. "c" end,
+        favor = function(n) return n .. " favor" end,
+    }
+    local lines = ns.Data.Sources({ src = "tv", cost = 500, mf = 30, v = { { 1519, "A" }, { 1637, "H" }, { 440 } }, rep = { 529, 6 } }, "Alliance", lookup)
+    eq(lines[1].label, "Trainer"); eq(lines[1].text, "500c")
+    eq(lines[2].label, "Vendor"); eq(lines[2].text, "Sold in Stormwind City, Tanaris · 30 favor", "own faction's vendors only")
+    eq(lines[3].text, "Needs Honored with Argent Dawn")
+    lines = ns.Data.Sources({ src = "q", q = { { 7, 440, "H", 40 } } }, "Alliance", lookup)
+    eq(lines[1].text, "A quest for the other faction")
+    lines = ns.Data.Sources({ src = "qd", q = { { 7, 440, nil, 40 } }, side = "H" }, "Alliance", lookup)
+    eq(lines[1].text, "Horde only")
+    eq(lines[2].text, "A Fishy Peril in Tanaris")
+    eq(lines[3].label, "Drop")
+    eq(ns.Data.Sources({}, "Alliance", lookup)[1].text, "Unknown")
+end)
+
+test("RecipeDB loads and covers the crafting professions", function()
+    local db = {}
+    assert(loadfile("RecipeDB.lua"))("Marketplace", db)
+    for _, prof in ipairs({ 171, 164, 185, 333, 202, 129, 165, 197, 186 }) do
+        assert(db.RecipeDB[prof] and next(db.RecipeDB[prof]), "profession " .. prof)
+    end
+    eq(db.RecipeDB[185][18238].c, 6887, "Spotted Yellowtail")
+end)
+
 print(passed .. " passed, " .. failed .. " failed")
 if failed > 0 then
     os.exit(1)

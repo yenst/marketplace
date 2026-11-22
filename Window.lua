@@ -16,7 +16,8 @@ local LIST_TOP = 132
 local ROW_HEIGHT, ROWS = 20, 12
 local LIST_HEIGHT = ROWS * ROW_HEIGHT + 6
 local DETAIL_TOP = LIST_TOP + LIST_HEIGHT + 12
-local CRAFTER_HEIGHT, CRAFTER_ROWS = 30, 5
+local CRAFTER_HEIGHT, CRAFTER_ROWS = 30, 4
+local SOURCE_TOP = 18 + CRAFTER_ROWS * CRAFTER_HEIGHT + 10
 local REAGENT_SLOTS, REAGENT_ROW = 8, 38
 local TAB_SIZE, MAX_TABS = 36, 12
 local STAT_WIDTH = 120
@@ -28,7 +29,7 @@ local STAT_ICONS = {
 }
 
 local frame
-local state = { prof = "all", query = "", onlineOnly = false, collapsed = {}, selected = nil, offset = 0, crafterOffset = 0 }
+local state = { prof = "all", query = "", onlineOnly = false, collapsed = { [Data.NOBODY] = true }, selected = nil, offset = 0, crafterOffset = 0 }
 local model = { recipes = {}, professions = {}, tabs = {}, crafters = {}, items = {}, rosterSize = 0 }
 
 -- Game data helpers ---------------------------------------------------------
@@ -129,7 +130,11 @@ local function gather()
         seen = ns.Sync.seen,
     })
     model.crafters, model.rosterSize = crafters, size
-    model.recipes, model.professions = Data.Index(crafters)
+    local names = {}
+    for _, p in ipairs(gameProfessions()) do
+        names[p.id] = p.name
+    end
+    model.recipes, model.professions = Data.Index(crafters, ns.RecipeDB, names)
 end
 
 -- Building blocks -------------------------------------------------------------
@@ -163,6 +168,42 @@ local function whisper(name, link)
         editBox:Insert("Hi! Could you craft " .. link .. " for me? ")
     end
 end
+
+-- Where a recipe is learned: game lookups for Data.Sources.
+local MERCHANTS_FAVOR = 3402
+local STANDINGS = { "Hated", "Hostile", "Unfriendly", "Neutral", "Friendly", "Honored", "Revered", "Exalted" }
+local sourceLookup = {
+    zone = function(area)
+        return C_Map and C_Map.GetAreaInfo and C_Map.GetAreaInfo(area)
+    end,
+    quest = function(id)
+        local title = C_QuestLog and C_QuestLog.GetTitleForQuestID and C_QuestLog.GetTitleForQuestID(id)
+        if not title and C_QuestLog and C_QuestLog.RequestLoadQuestByID then
+            C_QuestLog.RequestLoadQuestByID(id)
+        end
+        return title
+    end,
+    factionName = function(id)
+        if C_Reputation and C_Reputation.GetFactionDataByID then
+            local data = C_Reputation.GetFactionDataByID(id)
+            if data and data.name then
+                return data.name
+            end
+        end
+        return GetFactionInfoByID and (GetFactionInfoByID(id))
+    end,
+    standing = function(n)
+        return _G["FACTION_STANDING_LABEL" .. n] or STANDINGS[n] or ("Standing " .. n)
+    end,
+    money = function(copper)
+        return ns.Coins(copper)
+    end,
+    favor = function(n)
+        local info = C_CurrencyInfo and C_CurrencyInfo.GetCurrencyInfo and C_CurrencyInfo.GetCurrencyInfo(MERCHANTS_FAVOR)
+        local icon = info and info.iconFileID and ("|T" .. info.iconFileID .. ":12:12|t ") or ""
+        return n .. " " .. icon .. (info and info.name or "Merchant's Favor")
+    end,
+}
 
 -- Favourites ---------------------------------------------------------------
 
@@ -475,6 +516,45 @@ local function buildDetail()
         row.whisper:SetPoint("RIGHT")
         frame.crafters[i] = row
     end
+    frame.nobody = W.Text(right, 12, Theme.muted)
+    frame.nobody:SetPoint("TOPLEFT", 4, -24)
+    frame.nobody:SetPoint("RIGHT")
+    frame.nobody:SetWordWrap(true)
+    frame.nobody:SetText("Nobody in your guild knows this recipe yet.")
+
+    -- Where to learn it (from the recipe catalog); hover for the recipe item.
+    local source = CreateFrame("Frame", nil, right)
+    source:SetPoint("TOPLEFT", 0, -SOURCE_TOP)
+    source:SetPoint("BOTTOMRIGHT")
+    source:EnableMouse(true)
+    source:SetScript("OnEnter", function(self)
+        if self.itemID then
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetItemByID(self.itemID)
+            GameTooltip:Show()
+        end
+    end)
+    source:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    source:SetScript("OnMouseUp", function(self)
+        local link = self.itemID and select(2, GetItemInfo(self.itemID))
+        if link and IsModifiedClick and IsModifiedClick("CHATLINK") and ChatEdit_InsertLink then
+            ChatEdit_InsertLink(link)
+        end
+    end)
+    local line = W.Line(source)
+    line:SetPoint("TOPLEFT")
+    line:SetPoint("TOPRIGHT")
+    local sourceTitle = W.Text(source, 11, Theme.muted)
+    sourceTitle:SetPoint("TOPLEFT", 0, -8)
+    sourceTitle:SetText("Where to learn it")
+    frame.sourceSkill = W.Text(source, 11, Theme.muted, "RIGHT")
+    frame.sourceSkill:SetPoint("TOPRIGHT", 0, -8)
+    frame.sourceText = W.Text(source, 11)
+    frame.sourceText:SetPoint("TOPLEFT", sourceTitle, "BOTTOMLEFT", 0, -6)
+    frame.sourceText:SetPoint("BOTTOMRIGHT", 0, 2)
+    frame.sourceText:SetJustifyV("TOP")
+    frame.sourceText:SetWordWrap(true)
+    frame.source = source
 end
 
 local function buildFooter()
@@ -607,6 +687,7 @@ function Window.DrawList()
             row.label:SetPoint("LEFT", item.favorites and 38 or 22, 0)
             row.label:SetText(item.label)
             row.label:SetTextColor(unpack(Theme.text))
+            row.label:SetAlpha(1)
             row.count:SetText(ns.Plural(item.count, "recipe"))
             row.dot:Hide()
             row.selectedBg:Hide()
@@ -618,6 +699,7 @@ function Window.DrawList()
             row.star:Hide()
             row.label:SetPoint("LEFT", 34, 0)
             row.label:SetText(Theme.QualityHex(quality or 1) .. item.name .. "|r")
+            row.label:SetAlpha(item.total == 0 and 0.6 or 1)
             row.count:SetText(Data.CrafterText(item))
             row.dot:SetShown(item.online > 0)
             row.selectedBg:SetShown(item.recipe.id == state.selected)
@@ -716,6 +798,30 @@ local function drawReagents(meta)
     drawCosts(meta or {}, reagents, cost)
 end
 
+-- "Trainer  12s 50c", "Vendor  Sold in Stormwind", … plus the recipe item's
+-- auction price when it can be bought.
+local function drawSource(recipe)
+    local entry = recipe.source
+    local muted = Theme.Hex(Theme.muted)
+    frame.source.itemID = entry and entry.t
+    frame.sourceSkill:SetText(recipe.skill and ("Skill " .. recipe.skill) or "")
+    if not entry then
+        frame.sourceText:SetText(muted .. "Not in the recipe list Marketplace ships with.|r")
+        return
+    end
+    local lines = {}
+    for _, l in ipairs(Data.Sources(entry, UnitFactionGroup and UnitFactionGroup("player"), sourceLookup)) do
+        lines[#lines + 1] = muted .. l.label .. "|r  " .. l.text
+    end
+    if entry.t and not entry.b then
+        local price = ns.AH.Available() and ns.AH.Price(entry.t)
+        lines[#lines + 1] = muted .. "Recipe item|r  " .. (price and ("on the auction house for " .. ns.AH.Money(price)) or "can be traded")
+    elseif entry.t then
+        lines[#lines + 1] = muted .. "Recipe item|r  binds when picked up"
+    end
+    frame.sourceText:SetText(table.concat(lines, "\n"))
+end
+
 function Window.DrawDetail()
     if not frame then
         return
@@ -727,6 +833,7 @@ function Window.DrawDetail()
             row:Hide()
         end
         frame.crafterMore:SetText("")
+        frame.nobody:Hide()
         return
     end
     local meta = ns.Scanner.Meta(recipe.id) or {}
@@ -754,6 +861,8 @@ function Window.DrawDetail()
         end
     end
     frame.crafterMore:SetText(#list > CRAFTER_ROWS and string.format("%d of %d  (scroll)", math.min(#list, state.crafterOffset + CRAFTER_ROWS), #list) or "")
+    frame.nobody:SetShown(#list == 0)
+    drawSource(recipe)
 end
 
 local function drawFooter()

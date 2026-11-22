@@ -377,8 +377,22 @@ local tabsShown = 0
 for _, tab in ipairs(win.tabs) do if tab.shown then tabsShown = tabsShown + 1 end end
 assert(tabsShown == 10, "tabs: All plus the 9 crafting professions (got " .. tabsShown .. ")")
 for _, tab in ipairs(win.tabs) do if tab.title == "Alchemy" then tab.scripts.OnClick(tab) end end
-assert(win.empty.text:find("Nobody in your guild has shared Alchemy yet"), "empty profession tab explains itself")
 assert(win.headTitle.text == "Alchemy" and win.barText.text == "0 of 0 crafters online", "header for an empty profession")
+-- Nobody has Alchemy: its whole catalog sits under a collapsed group.
+rows = visibleRows()
+assert(#rows == 1 and rows[1].header and rows[1].label == "Not in your guild" and rows[1].collapsed and rows[1].count > 100,
+    "recipes nobody has, collapsed")
+C_Map = { GetAreaInfo = function(area) return "Zone " .. area end }
+UnitFactionGroup = function() return "Alliance" end
+win.rows[1].scripts.OnClick(win.rows[1])
+rows = visibleRows()
+assert(not rows[1].collapsed and rows[2].total == 0 and rows[2].skill <= rows[3].skill, "expanded, lowest skill first")
+assert(win.rows[2].count.text == "Skill " .. rows[2].skill, "skill instead of crafters")
+win.rows[2].scripts.OnClick(win.rows[2])
+assert(win.nobody.shown, "nobody knows it")
+assert(win.sourceText.text ~= "", "where to learn it")
+assert(win.sourceSkill.text == "Skill " .. rows[2].skill, "required skill")
+win.rows[1].scripts.OnClick(win.rows[1]) -- collapse it again
 
 -- Cooking tab: Dan's Spotted Yellowtail under its category.
 for _, tab in ipairs(win.tabs) do if tab.title == "Cooking" then tab.scripts.OnClick(tab) end end
@@ -388,6 +402,8 @@ assert(rows[2].name == "Spotted Yellowtail", "Dan's recipe listed")
 assert(win.selName.text:find("Spotted Yellowtail"), "first recipe selected and shown")
 assert(win.reagents[1].shown and win.reagents[1].count.text == "1/1", "reagent with have/need")
 assert(win.crafters[1].name.text == "Dan", "Dan listed as crafter")
+assert(not win.nobody.shown, "has crafters")
+assert(win.sourceText.text:find("Vendor") and win.sourceText.text:find("Zone 440"), "sold in Tanaris: " .. win.sourceText.text)
 win.crafters[1].whisper.scripts.OnClick(win.crafters[1].whisper)
 assert(told == "Dan" and inserted:find("Henchant:18238"), "whisper opens a tell with the recipe link")
 
@@ -418,7 +434,7 @@ C_Item.GetItemCount = function() return 1 end
 -- Collapse the header, then search across everything.
 win.rows[1].scripts.OnClick(win.rows[1])
 rows = visibleRows()
-assert(#rows == 1 and rows[1].collapsed, "header collapses")
+assert(#rows == 2 and rows[1].collapsed and rows[2].label == "Not in your guild", "header collapses")
 win.rows[1].scripts.OnClick(win.rows[1])
 for _, tab in ipairs(win.tabs) do if tab.title == "All professions" then tab.scripts.OnClick(tab) end end
 win.search:SetText("yellowtail")
