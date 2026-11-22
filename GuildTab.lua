@@ -3,13 +3,31 @@ local _, ns = ...
 -- A Marketplace tab on the Guild & Communities window, under its own side
 -- tabs (Chat, Roster, Guild Benefits, Guild Info). Blizzard_Communities
 -- loads on demand, so this waits for it.
-local TAB_KEYS = { "GuildInfoTab", "GuildBenefitsTab", "RosterTab", "ChatTab" }
+local TAB_KEYS = { "ChatTab", "RosterTab", "GuildBenefitsTab", "GuildInfoTab" }
 local tab
 
+-- The lowest tab hanging off the window's right edge: Blizzard's (some are
+-- shown or hidden only after the window opens) or another addon's.
 local function lowestTab(frame)
-    for _, key in ipairs(TAB_KEYS) do
-        local t = frame[key]
-        if t and t:IsShown() then
+    local right = frame:GetRight()
+    local best, bestBottom
+    for _, child in ipairs({ frame:GetChildren() }) do
+        if child ~= tab and child:IsShown() and right then
+            local left, bottom = child:GetLeft(), child:GetBottom()
+            local width = child:GetWidth() or 0
+            if left and bottom and left >= right - 8 and width > 0 and width < 80 then
+                if not bestBottom or bottom < bestBottom then
+                    best, bestBottom = child, bottom
+                end
+            end
+        end
+    end
+    if best then
+        return best
+    end
+    for i = #TAB_KEYS, 1, -1 do
+        local t = frame[TAB_KEYS[i]]
+        if type(t) == "table" and t:IsShown() then
             return t
         end
     end
@@ -28,6 +46,13 @@ local function place()
         tab:SetPoint("TOPLEFT", frame, "TOPRIGHT", 1, -36)
     end
     tab:SetShown(IsInGuild())
+end
+
+-- Again once the window has settled (tabs appear a frame or two later).
+local function placeSoon()
+    place()
+    C_Timer.After(0, place)
+    C_Timer.After(0.3, place)
 end
 
 local function onClick(self)
@@ -63,8 +88,15 @@ local function create()
         tab:SetIcon(ns.ICON, "Mkt")
     end
     ns.guildTab = tab
-    frame:HookScript("OnShow", place)
-    place()
+    frame:HookScript("OnShow", placeSoon)
+    for _, key in ipairs(TAB_KEYS) do
+        local t = frame[key]
+        if type(t) == "table" and t.HookScript then
+            t:HookScript("OnShow", placeSoon)
+            t:HookScript("OnHide", placeSoon)
+        end
+    end
+    placeSoon()
 end
 
 local events = CreateFrame("Frame")
