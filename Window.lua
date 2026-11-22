@@ -194,6 +194,17 @@ local function gather()
         names[p.id] = p.name
     end
     model.recipes, model.professions = Data.Index(crafters, ns.RecipeDB, names)
+    model.builtAt = GetTime and GetTime() or time()
+end
+
+-- The browser's data for other parts of the addon (pattern tooltips),
+-- rebuilt when older than 10 seconds.
+function Window.Model()
+    local now = GetTime and GetTime() or time()
+    if not model.builtAt or now - model.builtAt > 10 then
+        gather()
+    end
+    return model
 end
 
 -- Building blocks -------------------------------------------------------------

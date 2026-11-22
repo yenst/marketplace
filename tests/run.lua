@@ -497,6 +497,22 @@ test("Member filter: one guildmate's patterns", function()
     eq(table.concat(list, ","), "Billy Joel=2,Dan Pal=1,Fenna Frost=1,Kael Sun=2")
 end)
 
+test("Pattern tooltip people: who knows it, who could learn it", function()
+    local index = ns.Data.PatternIndex({ [164] = { [3] = { s = 200, t = 777 }, [4] = { s = 1 } } })
+    eq(index[777].recipe, 3); eq(index[777].prof, 164); eq(index[777].skill, 200)
+    local crafters = ns.Data.Crafters(ctx())
+    for _, c in ipairs(crafters) do
+        if c.professions[164] then c.professions[164].skill = ({ ["Billy Joel"] = 250, ["Dan Pal"] = 150, ["Fenna Frost"] = 300, ["Kael Sun"] = 220 })[c.name] end
+    end
+    local recipes = ns.Data.Index(crafters)
+    local known, canLearn = ns.Data.PatternPeople(recipes[3], crafters, 164, 200)
+    local function list(l) local out = {} for _, p in ipairs(l) do out[#out + 1] = p.name .. "=" .. tostring(p.skill) end return table.concat(out, ",") end
+    eq(list(known), "Fenna Frost=300,Kael Sun=220")
+    eq(list(canLearn), "Billy Joel=250", "Dan's 150 is too low")
+    known, canLearn = ns.Data.PatternPeople(nil, crafters, 164, 200)
+    eq(#known, 0)
+end)
+
 test("Data.Coverage counts patterns the guild knows", function()
     local recipes = {
         [1] = { prof = 164, crafters = { {} } },

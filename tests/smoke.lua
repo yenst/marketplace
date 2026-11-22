@@ -558,6 +558,16 @@ waiting()
 assert(clicked[1] and clicked[1]:find("|Hitem:13927:"), "then links the real item")
 Item, IsModifiedClick = nil, nil
 
+-- Pattern tooltips: the Spotted Yellowtail recipe item says Dan knows it.
+local tipLines = {}
+local tip = { AddLine = function(_, text) tipLines[#tipLines + 1] = text end, Show = function() end }
+ns.AddPatternLines(tip, 13939)
+local tipText = table.concat(tipLines, "\n")
+assert(tipText:find("Known by: .*Dan.*%(150%)"), "pattern tooltip: " .. tipText)
+tipLines = {}
+ns.AddPatternLines(tip, 13927) -- the fish itself, not a pattern
+assert(#tipLines == 0, "only patterns get lines")
+
 -- The Guild & Communities window (loaded on demand) gets a Marketplace tab.
 CommunitiesFrame = CreateFrame("Frame", "CommunitiesFrame")
 CommunitiesFrame.GuildInfoTab = CreateFrame("CheckButton")

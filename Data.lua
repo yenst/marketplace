@@ -461,3 +461,41 @@ function Data.Sources(entry, faction, lookup)
     return lines
 end
 
+-- Pattern tooltips ---------------------------------------------------------------
+
+-- Recipe items (patterns, plans, …) to the recipe they teach:
+-- { [itemID] = { recipe = recipeID, prof, skill } }.
+function Data.PatternIndex(catalog)
+    local index = {}
+    for profID, entries in pairs(catalog or {}) do
+        for recipeID, entry in pairs(entries) do
+            if entry.t and not index[entry.t] then
+                index[entry.t] = { recipe = recipeID, prof = profID, skill = entry.s or 0 }
+            end
+        end
+    end
+    return index
+end
+
+-- Who knows a recipe, and who has the profession at the skill it needs but
+-- hasn't learned it: two lists of { name, skill, class, state }, by name.
+--   recipe = Data.Index entry (or nil), crafters = Data.Crafters list
+function Data.PatternPeople(recipe, crafters, prof, skill)
+    local known, canLearn, knows = {}, {}, {}
+    for _, c in ipairs(recipe and recipe.crafters or {}) do
+        knows[c.key] = true
+        local p = c.professions and c.professions[prof]
+        known[#known + 1] = { name = c.name, skill = p and p.skill, class = c.class, state = c.state }
+    end
+    for _, c in ipairs(crafters or {}) do
+        local p = c.professions and c.professions[prof]
+        if p and not knows[c.key] and (p.skill or 0) >= (skill or 0) then
+            canLearn[#canLearn + 1] = { name = c.name, skill = p.skill, class = c.class, state = c.state }
+        end
+    end
+    local byName = function(a, b) return a.name < b.name end
+    table.sort(known, byName)
+    table.sort(canLearn, byName)
+    return known, canLearn
+end
+

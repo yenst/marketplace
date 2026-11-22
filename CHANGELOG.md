@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2-beta (unreleased)
+
+- Pattern tooltips (bags, vendors, auction house, links) show who in your guild knows the recipe and who has the skill to learn it.
+
 ## 0.1.1-beta
 
 - Profession level next to player names, e.g. "Billy Joel (215)"; levels sync with a one-line update as you skill up.
