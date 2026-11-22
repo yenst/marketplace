@@ -8,6 +8,15 @@ local _, ns = ...
 --   B:1:<hash>, P:…, C:…, I:…, E:<hash>
 --                the recipes themselves, by WHISPER, in lines under 255 bytes.
 --
+-- Relaying: everyone keeps what they received and passes it on, so a
+-- guildmate's recipes reach people who were never online at the same time.
+--   X:1:<owner>=<hash>=<stamp>,…   "whose recipes I hold" (index), in chunks
+--   Y:1:<0|1>                      end of index; 1 = "send me yours too"
+--   R:1:<owner>                    "send me what you hold for <owner>"
+--   B:1:<hash>:<owner> … E:<hash>  a relayed copy
+-- The stamp is the owner's latest scan time: the newer copy wins, and the
+-- owner's own transfer always does.
+--
 -- Only recipe and category IDs travel: every client can look up a recipe's
 -- name, icon and reagents from its ID (checked on Forever with /mkt probe
 -- resolve). Category names are sent once per profession.
@@ -83,9 +92,19 @@ function Sync.Chunk(lines, head, items, sep)
     end
 end
 
-function Sync.Encode(professions)
+-- Latest scan time in a set of professions: which of two copies is newer.
+function Sync.Stamp(professions)
+    local stamp = 0
+    for _, p in pairs(professions or {}) do
+        stamp = math.max(stamp, p.scannedAt or 0)
+    end
+    return stamp
+end
+
+-- owner: set when relaying someone else's recipes.
+function Sync.Encode(professions, owner)
     local hash = Sync.Hash(professions)
-    local lines = { "B:" .. Sync.VERSION .. ":" .. hash }
+    local lines = { "B:" .. Sync.VERSION .. ":" .. hash .. (owner and ":" .. owner or "") }
     for _, id in ipairs(sortedKeys(professions)) do
         local p = professions[id]
         lines[#lines + 1] = string.format("P:%d:%d:%d:%d:%s", id, p.skill or 0, p.maxSkill or 0, p.scannedAt or 0, clean(p.name))
@@ -105,16 +124,17 @@ function Sync.Encode(professions)
     return lines, hash
 end
 
--- Collects one sender's B…E lines. Feed returns (professions, hash) once a
--- complete, matching transfer has arrived; nil otherwise.
+-- Collects one sender's B…E lines. Feed returns (professions, hash, owner)
+-- once a complete, matching transfer has arrived (owner only for a relayed
+-- copy); nil otherwise.
 function Sync.NewDecoder()
     local pending
     local decoder = {}
     function decoder.Feed(line)
         local kind, rest = line:match("^(%u):(.*)$")
         if kind == "B" then
-            local version, hash = rest:match("^(%d+):(%x+)$")
-            pending = version == Sync.VERSION and { hash = hash, professions = {} } or nil
+            local version, hash, owner = rest:match("^(%d+):(%x+):?(.*)$")
+            pending = version == Sync.VERSION and { hash = hash, owner = owner ~= "" and owner or nil, professions = {} } or nil
         elseif not pending then
             return nil
         elseif kind == "P" then
@@ -141,12 +161,48 @@ function Sync.NewDecoder()
             local done = pending
             pending = nil
             if done and rest == done.hash and Sync.Hash(done.professions) == done.hash then
-                return done.professions, done.hash
+                return done.professions, done.hash, done.owner
             end
         end
         return nil
     end
     return decoder
+end
+
+-- Relay index -----------------------------------------------------------------
+
+local function shortName(name)
+    return (tostring(name or ""):gsub("%-[^%-]*$", ""))
+end
+
+local function entryStamp(entry)
+    return entry.stamp or Sync.Stamp(entry.professions)
+end
+
+-- "owner=hash=stamp" items for what we hold; members (short names) limits it
+-- to people still in the guild.
+function Sync.IndexItems(data, members)
+    local items = {}
+    for _, owner in ipairs(sortedKeys(data)) do
+        local entry = data[owner]
+        if entry.hash and entry.professions and (not members or members[shortName(owner)]) then
+            items[#items + 1] = owner .. "=" .. entry.hash .. "=" .. entryStamp(entry)
+        end
+    end
+    return items
+end
+
+-- Owners in someone's index worth asking them for: unknown to us, or a
+-- different and newer copy. skip(owner) leaves out ourselves and the like.
+function Sync.Wanted(theirs, data, skip)
+    local wanted = {}
+    for _, owner in ipairs(sortedKeys(theirs)) do
+        local e, mine = theirs[owner], data[owner]
+        if not (skip and skip(owner)) and (not mine or (mine.hash ~= e.hash and e.stamp > entryStamp(mine))) then
+            wanted[#wanted + 1] = owner
+        end
+    end
+    return wanted
 end
 
 -- Transport -----------------------------------------------------------------
@@ -256,6 +312,46 @@ end
 local decoders = {}
 local handlers = {}
 
+-- Index exchanges we started this session (we're the one catching up).
+local MAX_EXCHANGES = 2
+local exchanges, exchanged = 0, {}
+local incoming = {}   -- sender -> index being received
+local requested = {}  -- owner -> hash we already asked someone for
+
+-- Short names of everyone in the guild, or nil before the roster loads.
+local function members()
+    local n = GetNumGuildMembers and GetNumGuildMembers() or 0
+    if n == 0 then
+        return nil
+    end
+    local set = {}
+    for i = 1, n do
+        local name = GetGuildRosterInfo(i)
+        if name then
+            set[shortName(name)] = true
+        end
+    end
+    return set
+end
+
+local function isSelf(owner)
+    return Sync.IsMe(owner) or owner == (ns.char and ns.char.fullName)
+end
+
+local function sendIndex(target, wantReply)
+    local data = Sync.GuildData()
+    if not data then
+        return
+    end
+    local lines = {}
+    Sync.Chunk(lines, "X:" .. Sync.VERSION .. ":", Sync.IndexItems(data, members()), ",")
+    debug(string.format("index to %s: %d lines", target, #lines))
+    for _, line in ipairs(lines) do
+        send(line, "WHISPER", target)
+    end
+    send("Y:" .. Sync.VERSION .. ":" .. (wantReply and "1" or "0"), "WHISPER", target)
+end
+
 function handlers.H(sender, rest, channel)
     local version, hash = rest:match("^(%d+):(%x+)")
     if version ~= Sync.VERSION then
@@ -268,31 +364,102 @@ function handlers.H(sender, rest, channel)
         C_Timer.After(math.random(1, 4), function() send("R:" .. Sync.VERSION, "WHISPER", sender) end)
     end
     -- A guild-wide hello is someone logging in: tell them what we have.
-    if channel == "GUILD" and next(myShare()) then
+    if channel == "GUILD" and (next(myShare()) or (data and next(data))) then
         C_Timer.After(math.random(2, 8), function() send("H:" .. Sync.VERSION .. ":" .. Sync.MyHash(), "WHISPER", sender) end)
+    end
+    -- A whispered hello answers ours: swap indexes with the first few, to
+    -- catch up on guildmates who aren't online.
+    if channel == "WHISPER" and data and exchanges < MAX_EXCHANGES and not exchanged[sender] then
+        exchanges = exchanges + 1
+        exchanged[sender] = true
+        sendIndex(sender, true)
     end
 end
 
 function handlers.R(sender, rest)
-    if rest ~= Sync.VERSION then
+    local version, owner = rest:match("^(%d+):?(.*)$")
+    if version ~= Sync.VERSION then
         return
     end
-    local lines = Sync.Encode(myShare())
-    debug(string.format("%s asked for our recipes: sending %d lines", sender, #lines))
+    local lines
+    if owner == "" then
+        lines = Sync.Encode(myShare())
+        debug(string.format("%s asked for our recipes: sending %d lines", sender, #lines))
+    else
+        local data = Sync.GuildData()
+        local entry = data and data[owner]
+        if not (entry and entry.professions) then
+            return
+        end
+        lines = Sync.Encode(entry.professions, owner)
+        debug(string.format("%s asked for %s's recipes: relaying %d lines", sender, owner, #lines))
+    end
     for _, line in ipairs(lines) do
         send(line, "WHISPER", sender)
     end
 end
 
+function handlers.X(sender, rest)
+    local version, list = rest:match("^(%d+):(.*)$")
+    if version ~= Sync.VERSION then
+        return
+    end
+    local into = incoming[sender] or {}
+    incoming[sender] = into
+    for owner, hash, stamp in list:gmatch("([^,=]+)=(%x+)=(%d+)") do
+        into[owner] = { hash = hash, stamp = tonumber(stamp) }
+    end
+end
+
+function handlers.Y(sender, rest)
+    local version, reply = rest:match("^(%d+):(%d)$")
+    if version ~= Sync.VERSION then
+        return
+    end
+    local theirs = incoming[sender] or {}
+    incoming[sender] = nil
+    local data = Sync.GuildData()
+    if not data then
+        return
+    end
+    if reply == "1" then
+        sendIndex(sender, false)
+    end
+    local roster = members()
+    local wanted = Sync.Wanted(theirs, data, function(owner)
+        -- Online owners send their own; people who left aren't wanted.
+        return isSelf(owner) or owner == sender or Sync.seen[owner]
+            or requested[owner] == theirs[owner].hash
+            or (roster and not roster[shortName(owner)])
+    end)
+    debug(string.format("index from %s: asking for %d", sender, #wanted))
+    for _, owner in ipairs(wanted) do
+        requested[owner] = theirs[owner].hash
+        send("R:" .. Sync.VERSION .. ":" .. owner, "WHISPER", sender)
+    end
+end
+
 local function feed(sender, line)
     decoders[sender] = decoders[sender] or Sync.NewDecoder()
-    local professions, hash = decoders[sender].Feed(line)
+    local professions, hash, owner = decoders[sender].Feed(line)
     local data = professions and Sync.GuildData()
-    if data then
-        data[sender] = { professions = professions, hash = hash, updated = time() }
-        debug("received " .. sender .. "'s recipes")
-        ns.Refresh()
+    if not data then
+        return
     end
+    local stamp = Sync.Stamp(professions)
+    if not owner then
+        data[sender] = { professions = professions, hash = hash, stamp = stamp, updated = time() }
+        debug("received " .. sender .. "'s recipes")
+    else
+        local known = data[owner]
+        if isSelf(owner) or (known and (known.hash == hash or entryStamp(known) >= stamp)) then
+            return
+        end
+        -- updated: the owner's scan, the last time we know they were on.
+        data[owner] = { professions = professions, hash = hash, stamp = stamp, updated = stamp, via = sender }
+        debug(string.format("received %s's recipes via %s", owner, sender))
+    end
+    ns.Refresh()
 end
 
 function Sync.OnMessage(prefix, text, channel, sender)
@@ -336,6 +503,9 @@ function Sync.Report()
         end
         table.sort(parts)
         local state = Sync.seen[name] and "|cff4dcc73addon running|r" or "|cff8c949fnot seen this session|r"
+        if entry.via then
+            state = state .. " · |cff8c949fvia " .. entry.via .. "|r"
+        end
         lines[#lines + 1] = string.format("%s: %s · %s", name, #parts > 0 and table.concat(parts, ", ") or "no professions", state)
     end
     if #lines == 0 then

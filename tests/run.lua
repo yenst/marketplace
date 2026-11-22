@@ -183,6 +183,37 @@ test("Sync.Shareable leaves out professions without recipes", function()
     assert(s[185], "cooking")
 end)
 
+test("Sync relayed copies carry their owner", function()
+    local lines, hash = ns.Sync.Encode(bigProfessions(), "Eve Moon-Mirage")
+    eq(lines[1], "B:1:" .. hash .. ":Eve Moon-Mirage")
+    local decoder, got, gotHash, owner = ns.Sync.NewDecoder()
+    for _, line in ipairs(lines) do
+        got, gotHash, owner = decoder.Feed(line)
+    end
+    assert(got and got[164], "transfer completes")
+    eq(gotHash, hash)
+    eq(owner, "Eve Moon-Mirage")
+    local _, _, direct = ns.Sync.NewDecoder().Feed("B:1:abcd")
+    eq(direct, nil, "own transfers have no owner")
+    eq(ns.Sync.Stamp(bigProfessions()), 1795251763)
+end)
+
+test("Sync relay index: newer or unknown copies are wanted", function()
+    local function entry(hash, at) return { hash = hash, professions = { [185] = { scannedAt = at, recipes = { [1] = 0 } } } } end
+    local mine = { ["Ann"] = entry("aaaa", 100), ["Bob"] = entry("bbbb", 100), ["Cid"] = entry("cccc", 100), ["Gone"] = entry("dddd", 5) }
+    eq(table.concat(ns.Sync.IndexItems(mine, { Ann = true, Bob = true, Cid = true }), ","),
+        "Ann=aaaa=100,Bob=bbbb=100,Cid=cccc=100", "people who left the guild aren't offered")
+    eq(#ns.Sync.IndexItems(mine), 4, "no roster yet: everything")
+    local theirs = {
+        Ann = { hash = "aaaa", stamp = 100 },  -- same copy
+        Bob = { hash = "b2b2", stamp = 200 },  -- newer
+        Cid = { hash = "c0c0", stamp = 50 },   -- older
+        Dee = { hash = "eeee", stamp = 10 },   -- unknown to us
+        Me = { hash = "ffff", stamp = 999 },   -- skipped
+    }
+    eq(table.concat(ns.Sync.Wanted(theirs, mine, function(o) return o == "Me" end), ","), "Bob,Dee")
+end)
+
 -- Data: a guild with me (Billy), my offline alt, Dan (addon running),
 -- Fenna (online, no addon this session) and Kael (offline).
 local function bs(recipes) return { name = "Blacksmithing", recipes = recipes, categories = { [10] = { name = "Weapons" }, [11] = { name = "Armor" } } } end

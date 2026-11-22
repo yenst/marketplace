@@ -2,7 +2,7 @@
 
 Find who can craft it. A profession browser for WoW Forever.
 
-- **Guild:** everyone in your guild who runs Marketplace shares their recipes. Search across every profession or pick one, filter by member, and see who can craft a recipe, online first.
+- **Guild:** everyone in your guild who runs Marketplace shares their recipes. Search across every profession or pick one, filter by member, and see who can craft a recipe, online first. Recipes are passed on between guildmates, so you also see crafters who haven't been online at the same time as you.
 - **Favorites:** right-click a recipe (or use the star in its details) to pin it at the top of the list.
 - **Auctionator (optional):** reagent prices, what the mats cost, what you're short, and a shopping list for the missing reagents.
 

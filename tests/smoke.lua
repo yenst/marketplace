@@ -183,6 +183,48 @@ assert(stored and stored.hash == danHash and stored.professions[185].recipes[182
 out = {}
 addon("H:1:" .. danHash, "WHISPER", "Dan-Mirage")
 assert(not sentTo("Dan-Mirage", "^R:1$"), "known hash: no new request")
+assert(sentTo("Dan-Mirage", "^X:1:Dan%-Mirage=" .. danHash .. "=1$") and sentTo("Dan-Mirage", "^Y:1:1$"),
+    "Dan answered our hello: send him our index and ask for his")
+
+-- Dan holds Eve's recipes; Eve is offline. Dan relays them.
+local eve = { [197] = { id = 197, name = "Tailoring", skill = 75, maxSkill = 150, scannedAt = 50, recipes = { [2330] = 0 }, categories = {} } }
+local eveLines, eveHash = ns.Sync.Encode(eve, "Eve-Mirage")
+out = {}
+addon("X:1:Dan-Mirage=" .. danHash .. "=1,Eve-Mirage=" .. eveHash .. "=50,Tester Joel=abcdef01=99", "WHISPER", "Dan-Mirage")
+addon("Y:1:0", "WHISPER", "Dan-Mirage")
+assert(sentTo("Dan-Mirage", "^R:1:Eve%-Mirage$"), "ask Dan for Eve's recipes")
+assert(not sentTo("Dan-Mirage", "^R:1:Tester") and not sentTo("Dan-Mirage", "^R:1:Dan"), "not for ours or Dan's own")
+assert(not sentTo("Dan-Mirage", "^Y:"), "Dan didn't ask for our index back")
+for _, line in ipairs(eveLines) do addon(line, "WHISPER", "Dan-Mirage") end
+local eveStored = MarketplaceDB.guilds["Test Guild"]["Eve-Mirage"]
+assert(eveStored and eveStored.via == "Dan-Mirage" and eveStored.professions[197].recipes[2330], "Eve's recipes stored via Dan")
+assert(MarketplaceDB.guilds["Test Guild"]["Dan-Mirage"].hash == danHash, "Dan's own entry untouched")
+
+-- An older relayed copy doesn't replace a newer one.
+local oldEve = { [197] = { id = 197, name = "Tailoring", skill = 1, maxSkill = 75, scannedAt = 10, recipes = { [2329] = 0 }, categories = {} } }
+for _, line in ipairs((ns.Sync.Encode(oldEve, "Eve-Mirage"))) do addon(line, "WHISPER", "Fenna-Mirage") end
+assert(MarketplaceDB.guilds["Test Guild"]["Eve-Mirage"].hash == eveHash, "older copy ignored")
+-- A relayed copy of ourselves is ignored.
+for _, line in ipairs((ns.Sync.Encode(oldEve, "Tester Joel"))) do addon(line, "WHISPER", "Fenna-Mirage") end
+assert(not MarketplaceDB.guilds["Test Guild"]["Tester Joel"], "no relayed copy of ourselves")
+
+-- We pass Eve's recipes on to someone who asks.
+out = {}
+addon("R:1:Eve-Mirage", "WHISPER", "Fenna-Mirage")
+local relayDecoder, relayed, _, relayOwner = ns.Sync.NewDecoder()
+for _, m in ipairs(out) do
+    local p, h, o = relayDecoder.Feed(m.text)
+    if p then relayed, relayOwner = p, o end
+end
+assert(relayed and relayed[197] and relayOwner == "Eve-Mirage", "we relay Eve's recipes")
+out = {}
+addon("R:1:Nobody", "WHISPER", "Fenna-Mirage")
+assert(#out == 0, "nothing to relay for unknown people")
+out = {}
+addon("X:1:Eve-Mirage=" .. eveHash .. "=50", "WHISPER", "Fenna-Mirage")
+addon("Y:1:1", "WHISPER", "Fenna-Mirage")
+assert(sentTo("Fenna-Mirage", "Eve%-Mirage=") and sentTo("Fenna-Mirage", "^Y:1:0$"), "index sent back when asked")
+assert(not sentTo("Fenna-Mirage", "^R:"), "same copy: nothing to ask for")
 
 out = {}
 addon("R:1", "WHISPER", "Dan-Mirage")
@@ -194,7 +236,8 @@ end
 assert(got and got[164], "Dan gets our Blacksmithing")
 
 SlashCmdList.MARKETPLACE("guild")
-assert(chat[#chat]:find("Dan%-Mirage: Cooking 150 %(1%) · addon running"), "/mkt guild lists Dan")
+assert(chat[#chat - 1]:find("Dan%-Mirage: Cooking 150 %(1%) · addon running"), "/mkt guild lists Dan")
+assert(chat[#chat]:find("Eve%-Mirage: Tailoring 75 %(1%) · not seen this session · via Dan%-Mirage"), "and Eve, relayed by Dan")
 SlashCmdList.MARKETPLACE("debug")
 assert(MarketplaceDB.settings.debug, "debug on")
 addon("H:1:" .. danHash, "WHISPER", "Dan-Mirage")
@@ -206,9 +249,10 @@ addon("H:1:" .. danHash .. ":" .. ns.Sync.code, "GUILD", "Tester Joel")
 assert(#out == 0, "our own guild echo is ignored")
 
 -- The browser window with us and Dan in the guild.
-GetNumGuildMembers = function() return 2 end
+GetNumGuildMembers = function() return 3 end
 GetGuildRosterInfo = function(i)
     if i == 1 then return "Dan-Mirage", "", 0, 60, "Paladin", "", "", "", true, 0, "PALADIN" end
+    if i == 3 then return "Eve-Mirage", "", 0, 40, "Mage", "", "", "", false, 0, "MAGE" end
     return "Tester Joel-Mirage", "", 0, 60, "Warrior", "", "", "", true, 0, "WARRIOR"
 end
 C_GuildInfo = { GuildRoster = function() end }
@@ -293,7 +337,7 @@ rows = visibleRows()
 assert(#rows == 2 and rows[2].name == "Spotted Yellowtail", "search narrows the list")
 win.search:SetText("")
 win.search.scripts.OnTextChanged(win.search)
-assert(win.footer.text:find("Data from 1 of 2 guild members"), "footer coverage: " .. tostring(win.footer.text))
+assert(win.footer.text:find("Data from 2 of 3 guild members"), "footer coverage: " .. tostring(win.footer.text))
 
 -- Favourites: right-click a recipe, it moves under "Favorites" at the top.
 for _, tab in ipairs(win.tabs) do if tab.title == "Cooking" then tab.scripts.OnClick(tab) end end
