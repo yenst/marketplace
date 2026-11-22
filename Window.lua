@@ -740,8 +740,15 @@ function Window.DrawList()
             row.label:SetPoint("LEFT", 34, 0)
             row.label:SetText(Theme.QualityHex(quality or 1) .. item.name .. "|r")
             row.label:SetAlpha(item.total == 0 and 0.6 or 1)
-            row.count:SetText(Data.CrafterText(item))
+            local text = Data.CrafterText(item)
+            row.count:SetText(text)
             row.dot:SetShown(item.online > 0)
+            row.dot:ClearAllPoints()
+            if text == "" then
+                row.dot:SetPoint("RIGHT", -10, 0)
+            else
+                row.dot:SetPoint("RIGHT", row.count, "LEFT", -6, 0)
+            end
             row.selectedBg:SetShown(item.recipe.id == state.selected)
         end
     end

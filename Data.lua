@@ -290,14 +290,13 @@ function Data.Coverage(recipes, prof)
     return known, total
 end
 
--- "2 · 1 online", "3 · offline", "Skill 165" (nobody has it)
+-- Right-hand text of a recipe row: "Skill 165" when nobody has it, else
+-- nothing (the green dot says someone's online).
 function Data.CrafterText(row)
     if row.total == 0 then
         return row.skill and ("Skill " .. row.skill) or "Nobody"
-    elseif row.online > 0 then
-        return string.format("%d · %d online", row.total, row.online)
     end
-    return string.format("%d · offline", row.total)
+    return ""
 end
 
 -- Status line under a crafter's name.

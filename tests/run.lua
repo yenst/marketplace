@@ -360,7 +360,7 @@ test("Data.List groups by category, filters and collapses", function()
     eq(items[3].label, "Armor")
     eq(items[4].name, "Imperial Plate")
     eq(items[5].name, "Lionheart Helm")
-    eq(ns.Data.CrafterText(items[2]), "3 · 2 online")
+    eq(ns.Data.CrafterText(items[2]), "", "no text: the green dot shows someone is online")
 
     items = ns.Data.List(recipes, { prof = "all", query = "" }, metaOf, itemName)
     eq(items[1].label, "Blacksmithing", "All groups by profession")
