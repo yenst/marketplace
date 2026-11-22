@@ -163,7 +163,7 @@ test("Sync decoder drops incomplete or mismatched transfers", function()
         end
     end
     eq(decoder.Feed("E:deadbeef"), nil, "end without a begin")
-    eq(ns.Sync.NewDecoder().Feed("B:2:abcd"), nil, "other protocol versions are ignored")
+    eq(ns.Sync.NewDecoder().Feed("B:1:abcd"), nil, "other protocol versions are ignored")
 end)
 
 test("Sync.Hash changes with recipes and skill", function()
@@ -183,35 +183,90 @@ test("Sync.Shareable leaves out professions without recipes", function()
     assert(s[185], "cooking")
 end)
 
-test("Sync relayed copies carry their owner", function()
-    local lines, hash = ns.Sync.Encode(bigProfessions(), "Eve Moon-Mirage")
-    eq(lines[1], "B:1:" .. hash .. ":Eve Moon-Mirage")
-    local decoder, got, gotHash, owner = ns.Sync.NewDecoder()
+test("Sync relayed copies carry their owner and stamp", function()
+    local lines, hash = ns.Sync.Encode(bigProfessions(), "Eve Moon-Mirage", 1800000000)
+    eq(lines[1], "B:2:" .. hash .. ":1800000000:Eve Moon-Mirage")
+    local decoder, got, gotHash, owner, stamp = ns.Sync.NewDecoder()
     for _, line in ipairs(lines) do
-        got, gotHash, owner = decoder.Feed(line)
+        got, gotHash, owner, stamp = decoder.Feed(line)
     end
     assert(got and got[164], "transfer completes")
     eq(gotHash, hash)
     eq(owner, "Eve Moon-Mirage")
-    local _, _, direct = ns.Sync.NewDecoder().Feed("B:1:abcd")
-    eq(direct, nil, "own transfers have no owner")
+    eq(stamp, 1800000000)
+    local _, _, direct = ns.Sync.ParseBegin("B:2:abcd:5:")
+    eq(direct, nil, "own copies have no owner")
     eq(ns.Sync.Stamp(bigProfessions()), 1795251763)
 end)
 
-test("Sync relay index: newer or unknown copies are wanted", function()
-    local function entry(hash, at) return { hash = hash, professions = { [185] = { scannedAt = at, recipes = { [1] = 0 } } } } end
-    local mine = { ["Ann"] = entry("aaaa", 100), ["Bob"] = entry("bbbb", 100), ["Cid"] = entry("cccc", 100), ["Gone"] = entry("dddd", 5) }
-    eq(table.concat(ns.Sync.IndexItems(mine, { Ann = true, Bob = true, Cid = true }), ","),
-        "Ann=aaaa=100,Bob=bbbb=100,Cid=cccc=100", "people who left the guild aren't offered")
-    eq(#ns.Sync.IndexItems(mine), 4, "no roster yet: everything")
-    local theirs = {
-        Ann = { hash = "aaaa", stamp = 100 },  -- same copy
-        Bob = { hash = "b2b2", stamp = 200 },  -- newer
-        Cid = { hash = "c0c0", stamp = 50 },   -- older
-        Dee = { hash = "eeee", stamp = 10 },   -- unknown to us
-        Me = { hash = "ffff", stamp = 999 },   -- skipped
+test("Sync packs numbers 5 bits per character", function()
+    for _, n in ipairs({ 0, 1, 31, 32, 1023, 1024, 18238, 1260001, 4294967295 }) do
+        local packed = ns.Sync.PackInt(n)
+        local got, pos = ns.Sync.UnpackInt(packed .. "x", 1)
+        eq(got, n, "round trip " .. n)
+        eq(pos, #packed + 1)
+    end
+    eq(#ns.Sync.PackInt(31), 1)
+    eq(#ns.Sync.PackInt(1023), 2)
+end)
+
+test("Sync copies are compact", function()
+    -- 240 recipes spread evenly over 12 categories (worst case for the
+    -- deltas): 8 lines, against 14 before packing.
+    local recipes, n = {}, 0
+    for id = 2000, 30000, 117 do
+        n = n + 1
+        recipes[id] = 100 + n % 12
+    end
+    local cats = {}
+    for c = 100, 111 do cats[c] = { name = "Category " .. c, parent = 0 } end
+    local lines = ns.Sync.Encode({ [164] = { name = "Blacksmithing", skill = 300, maxSkill = 300, recipes = recipes, categories = cats } })
+    assert(n >= 230, "enough recipes")
+    assert(#lines <= 8, "lines: " .. #lines)
+end)
+
+test("Sync digests: buckets that differ", function()
+    local a = { Ann = { hash = "aaaa", stamp = 1 }, Bob = { hash = "bbbb", stamp = 1 } }
+    local b = { Ann = { hash = "aaaa", stamp = 1 }, Bob = { hash = "b2b2", stamp = 2 } }
+    local da, db = ns.Sync.Digest(a), ns.Sync.Digest(b)
+    eq(#da, 64)
+    eq(ns.Sync.Digest({ Bob = a.Bob, Ann = a.Ann }), da, "order doesn't matter")
+    local diff = ns.Sync.DiffBuckets(da, db)
+    eq(#diff, 1)
+    eq(diff[1], ns.Sync.BucketOf("Bob"))
+    eq(#ns.Sync.DiffBuckets(da, da), 0)
+end)
+
+test("Sync.Compare: newer or unknown copies are wanted, ours are offered", function()
+    local function bucketMates(n)
+        -- owners that land in the same bucket as "Ann"
+        local out, b = {}, ns.Sync.BucketOf("Ann")
+        local i = 0
+        while #out < n do
+            i = i + 1
+            if ns.Sync.BucketOf("P" .. i) == b then out[#out + 1] = "P" .. i end
+        end
+        return out, b
+    end
+    local p, bucket = bucketMates(5)
+    local mine = {
+        [p[1]] = { hash = "aaaa", stamp = 100 }, -- same as listed
+        [p[2]] = { hash = "bbbb", stamp = 100 }, -- listed is newer
+        [p[3]] = { hash = "cccc", stamp = 100 }, -- ours is newer
+        [p[4]] = { hash = "dddd", stamp = 100 }, -- not listed
     }
-    eq(table.concat(ns.Sync.Wanted(theirs, mine, function(o) return o == "Me" end), ","), "Bob,Dee")
+    local list = {
+        [p[1]] = { hash = "aaaa", stamp = 100 },
+        [p[2]] = { hash = "b2b2", stamp = 200 },
+        [p[3]] = { hash = "c0c0", stamp = 50 },
+        [p[5]] = { hash = "eeee", stamp = 10 },  -- unknown to us
+        Me = { hash = "ffff", stamp = 999 },
+    }
+    local wanted, offer = ns.Sync.Compare(list, mine, bucket, function(o) return o == "Me" end)
+    table.sort(wanted); table.sort(offer)
+    eq(table.concat(wanted, ","), table.concat({ p[2], p[5] }, ","))
+    local expect = { p[3], p[4] }; table.sort(expect)
+    eq(table.concat(offer, ","), table.concat(expect, ","))
 end)
 
 -- Data: a guild with me (Billy), my offline alt, Dan (addon running),
