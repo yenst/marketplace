@@ -477,11 +477,13 @@ function Data.PatternIndex(catalog)
     return index
 end
 
--- Who knows a recipe, and who has the profession at the skill it needs but
--- hasn't learned it: two lists of { name, skill, class, state }, by name.
+-- Who knows a recipe, who has the profession at the skill it needs but
+-- hasn't learned it, and who has the profession below that skill: three
+-- lists of { name, skill, class, state }, by name (the last by skill, highest
+-- first).
 --   recipe = Data.Index entry (or nil), crafters = Data.Crafters list
 function Data.PatternPeople(recipe, crafters, prof, skill)
-    local known, canLearn, knows = {}, {}, {}
+    local known, canLearn, tooLow, knows = {}, {}, {}, {}
     for _, c in ipairs(recipe and recipe.crafters or {}) do
         knows[c.key] = true
         local p = c.professions and c.professions[prof]
@@ -489,13 +491,24 @@ function Data.PatternPeople(recipe, crafters, prof, skill)
     end
     for _, c in ipairs(crafters or {}) do
         local p = c.professions and c.professions[prof]
-        if p and not knows[c.key] and (p.skill or 0) >= (skill or 0) then
-            canLearn[#canLearn + 1] = { name = c.name, skill = p.skill, class = c.class, state = c.state }
+        if p and not knows[c.key] then
+            local person = { name = c.name, skill = p.skill, class = c.class, state = c.state }
+            if (p.skill or 0) >= (skill or 0) then
+                canLearn[#canLearn + 1] = person
+            else
+                tooLow[#tooLow + 1] = person
+            end
         end
     end
     local byName = function(a, b) return a.name < b.name end
     table.sort(known, byName)
     table.sort(canLearn, byName)
-    return known, canLearn
+    table.sort(tooLow, function(a, b)
+        if (a.skill or 0) ~= (b.skill or 0) then
+            return (a.skill or 0) > (b.skill or 0)
+        end
+        return a.name < b.name
+    end)
+    return known, canLearn, tooLow
 end
 

@@ -5,7 +5,8 @@ local _, ns = ...
 local MAX_NAMES = 5
 local patterns
 
-local function names(list)
+-- dim: grey names instead of class colours.
+local function names(list, dim)
     local muted = ns.Theme.Hex(ns.Theme.muted)
     local parts = {}
     for i, p in ipairs(list) do
@@ -13,7 +14,7 @@ local function names(list)
             parts[#parts + 1] = muted .. "and " .. (#list - MAX_NAMES) .. " more|r"
             break
         end
-        local c = p.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[p.class]
+        local c = not dim and p.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[p.class]
         local name = c and string.format("|cff%02x%02x%02x%s|r", c.r * 255, c.g * 255, c.b * 255, p.name) or p.name
         parts[#parts + 1] = name .. (p.skill and p.skill > 0 and (muted .. " (" .. p.skill .. ")|r") or "")
     end
@@ -30,7 +31,7 @@ local function addLines(tooltip, itemID)
         return
     end
     local model = ns.Window.Model()
-    local known, canLearn = ns.Data.PatternPeople(model.recipes[pattern.recipe], model.crafters, pattern.prof, pattern.skill)
+    local known, canLearn, tooLow = ns.Data.PatternPeople(model.recipes[pattern.recipe], model.crafters, pattern.prof, pattern.skill)
     tooltip:AddLine(" ")
     tooltip:AddLine("|T" .. ns.ICON .. ":14:14|t Marketplace", 0.55, 0.76, 1)
     if #known > 0 then
@@ -40,6 +41,9 @@ local function addLines(tooltip, itemID)
     end
     if #canLearn > 0 then
         tooltip:AddLine("Could learn it: " .. names(canLearn), 1, 0.82, 0, true)
+    end
+    if #tooLow > 0 then
+        tooltip:AddLine("Needs " .. pattern.skill .. ": " .. names(tooLow, true), 0.6, 0.6, 0.6, true)
     end
     tooltip:Show()
 end

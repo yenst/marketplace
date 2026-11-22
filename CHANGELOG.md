@@ -2,7 +2,7 @@
 
 ## 0.1.2-beta (unreleased)
 
-- Pattern tooltips (bags, vendors, auction house, links) show who in your guild knows the recipe and who has the skill to learn it.
+- Pattern tooltips (bags, vendors, auction house, links) show who in your guild knows the recipe, who has the skill to learn it, and who has the profession but needs more skill.
 
 ## 0.1.1-beta
 

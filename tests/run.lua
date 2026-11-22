@@ -505,10 +505,11 @@ test("Pattern tooltip people: who knows it, who could learn it", function()
         if c.professions[164] then c.professions[164].skill = ({ ["Billy Joel"] = 250, ["Dan Pal"] = 150, ["Fenna Frost"] = 300, ["Kael Sun"] = 220 })[c.name] end
     end
     local recipes = ns.Data.Index(crafters)
-    local known, canLearn = ns.Data.PatternPeople(recipes[3], crafters, 164, 200)
+    local known, canLearn, tooLow = ns.Data.PatternPeople(recipes[3], crafters, 164, 200)
     local function list(l) local out = {} for _, p in ipairs(l) do out[#out + 1] = p.name .. "=" .. tostring(p.skill) end return table.concat(out, ",") end
     eq(list(known), "Fenna Frost=300,Kael Sun=220")
-    eq(list(canLearn), "Billy Joel=250", "Dan's 150 is too low")
+    eq(list(canLearn), "Billy Joel=250")
+    eq(list(tooLow), "Dan Pal=150", "Dan's 150 is too low for now")
     known, canLearn = ns.Data.PatternPeople(nil, crafters, 164, 200)
     eq(#known, 0)
 end)
