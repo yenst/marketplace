@@ -198,6 +198,10 @@ for _, line in ipairs(danLines) do addon(line, "GUILD", "Dan-Mirage") end
 local stored = MarketplaceDB.guilds["Test Guild"]["Dan-Mirage"]
 assert(stored and stored.hash == danHash and stored.stamp == 1000 and stored.professions[185].recipes[18238], "Dan's recipes are stored")
 assert(ns.Sync.seen["Dan-Mirage"], "Dan counts as running the addon")
+addon("S:2:185=140", "GUILD", "Dan-Mirage")
+assert(MarketplaceDB.guilds["Test Guild"]["Dan-Mirage"].professions[185].skill == 140, "skill update")
+assert(MarketplaceDB.guilds["Test Guild"]["Dan-Mirage"].hash == danHash, "hash unchanged")
+addon("S:2:185=150", "GUILD", "Dan-Mirage")
 
 local myHash = ns.Sync.MyHash()
 local function digestOf(state) return ns.Sync.Digest(state) end
@@ -333,6 +337,18 @@ for _, m in ipairs(out) do if m.text:find("^B:") then copies = copies + 1 end en
 assert(copies == 1, "changed recipes: one copy to the guild")
 me.professions[164].recipes[9999] = nil
 myHash = ns.Sync.MyHash()
+ns.Sync.Announce() -- the recipe went again: a copy
+flush()
+-- Levelling alone: a one-line skill update, not a copy.
+out = {}
+me.professions[164].skill = 216
+ns.Sync.Announce()
+flush()
+assert(#out == 1 and out[1].text == "S:2:164=216", "skill update: " .. tostring(out[1] and out[1].text))
+out = {}
+ns.Sync.Announce()
+flush()
+assert(#out == 0, "no repeat when nothing moved")
 
 -- Periodic check: Dan's digest matched ours a moment ago, so none is due;
 -- 20 minutes later one is, until someone's digest matches again.
@@ -433,7 +449,7 @@ assert(rows[1].header and rows[1].label == "Fish", "Cooking groups by category")
 assert(rows[2].name == "Spotted Yellowtail", "Dan's recipe listed")
 assert(win.selName.text:find("Spotted Yellowtail"), "first recipe selected and shown")
 assert(win.reagents[1].shown and win.reagents[1].count.text == "1/1", "reagent with have/need")
-assert(win.crafters[1].name.text == "Dan", "Dan listed as crafter")
+assert(win.crafters[1].name.text:find("^Dan") and win.crafters[1].name.text:find("%(150%)"), "Dan listed with his Cooking level: " .. win.crafters[1].name.text)
 assert(not win.nobody.shown, "has crafters")
 assert(win.crafters[1].class.shown, "class icon next to Dan")
 assert(win.sourceText.text:find("VendorGossipIcon") and win.sourceText.text:find("Sold in Zone 440"), "sold in Tanaris: " .. win.sourceText.text)
@@ -493,8 +509,8 @@ assert(visibleRows()[1].label == "Fish", "back in its category")
 win.member.scripts.OnClick(win.member)
 assert(win.memberMenu.shown and win.memberMenu.rows[1].label.text == "All members", "member menu")
 local danRow
-for _, row in ipairs(win.memberMenu.rows) do if row.shown and row.label.text == "Dan" then danRow = row end end
-assert(danRow and danRow.count.text == "1", "Dan in the menu with 1 pattern here")
+for _, row in ipairs(win.memberMenu.rows) do if row.shown and row.label.text:find("^Dan") then danRow = row end end
+assert(danRow and danRow.count.text == "1" and danRow.label.text:find("%(150%)"), "Dan in the menu with his level and 1 pattern here")
 assert(danRow.class.shown and not win.memberMenu.rows[1].class.shown, "class icons in the member menu, none for All members")
 danRow.scripts.OnClick(danRow)
 assert(not win.memberMenu.shown and win.member.text.text == "Dan", "filtered to Dan")

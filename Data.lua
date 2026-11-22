@@ -303,7 +303,8 @@ function Data.Coverage(recipes, prof, member)
 end
 
 -- Members for the member filter, by name: those with any patterns in the
--- profession (or any at all). { { key, name, class, state, count } }
+-- profession (or any at all). { { key, name, class, state, count, skill } }
+-- (skill: their level in that profession; nil for "all")
 function Data.Members(recipes, prof)
     local byKey = {}
     for _, r in pairs(recipes) do
@@ -311,7 +312,8 @@ function Data.Members(recipes, prof)
             for _, c in ipairs(r.crafters) do
                 local m = byKey[c.key]
                 if not m then
-                    m = { key = c.key, name = c.name, class = c.class, state = c.state, count = 0 }
+                    local p = prof ~= "all" and c.professions and c.professions[prof]
+                    m = { key = c.key, name = c.name, class = c.class, state = c.state, count = 0, skill = p and p.skill }
                     byKey[c.key] = m
                 end
                 m.count = m.count + 1

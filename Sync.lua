@@ -17,6 +17,8 @@ local _, ns = ...
 --                                what's in a bucket whose digest differed;
 --                                the first one heard stops the others.
 --   R:2:<owner>=<hash>,…         "someone please send these copies".
+--   S:2:<profession>=<skill>,…   the sender's current skill levels (not in
+--                                the hash: levelling alone sends just this).
 --   B:2:<hash>:<stamp>:<owner> P… C… I… E:<hash>
 --                                a copy (owner empty = the sender's own).
 --
@@ -574,7 +576,28 @@ local pendingSend = {}         -- owner (or SELF) -> token of a scheduled copy
 local lastOwnAt = -math.huge
 local schedule
 
+-- "164=215,186=120": our skill levels, to tell when they changed.
+local function skillLine()
+    local items = {}
+    for _, id in ipairs(sortedKeys(myShare())) do
+        items[#items + 1] = id .. "=" .. (ns.char.professions[id].skill or 0)
+    end
+    return table.concat(items, ",")
+end
+
+local SKILLS = "@skills" -- pending key for a skill update
+local lastSkillsAt = -math.huge
+
 local function sendCopy(owner)
+    if owner == SKILLS then
+        local line = skillLine()
+        if line ~= "" and line ~= ns.char.sentSkills and Sync.selfName then
+            ns.char.sentSkills, lastSkillsAt = line, time()
+            debug("our skill levels to the guild: " .. line)
+            control("S:" .. Sync.VERSION .. ":" .. line)
+        end
+        return
+    end
     if owner == SELF then
         if not Sync.selfName then
             -- Our hello hasn't echoed back yet, so we can't yet tell our
@@ -589,6 +612,7 @@ local function sendCopy(owner)
         local lines, hash = Sync.Encode(share, nil, ownStamp())
         lastOwnAt = time()
         ns.char.sentHash = hash -- saved: no resend next session if unchanged
+        ns.char.sentSkills = skillLine() -- the copy carries the levels
         debug(string.format("our recipes to the guild: %d lines", #lines))
         sendCopyLines(lines, SELF)
         return
@@ -621,6 +645,10 @@ end
 local function scheduleOwn(changed)
     if changed then
         if Sync.MyHash() == ns.char.sentHash then
+            -- Same recipes; only levels may have moved: a one-line update.
+            if skillLine() ~= ns.char.sentSkills then
+                schedule(SKILLS, math.max(Sync.DEBOUNCE, lastSkillsAt + Sync.MIN_INTERVAL - time()))
+            end
             return
         end
         schedule(SELF, math.max(Sync.DEBOUNCE, lastOwnAt + Sync.MIN_INTERVAL - time()))
@@ -811,6 +839,23 @@ function handlers.H(sender, rest)
 end
 
 function handlers.A() end -- Sync.seen is all it's for
+
+-- Someone's skill levels moved: update their stored copy (not its hash).
+function handlers.S(sender, rest)
+    local version, list = rest:match("^(%d+):(.*)$")
+    local data = version == Sync.VERSION and Sync.GuildData()
+    local entry = data and data[sender]
+    if not (entry and entry.professions) then
+        return
+    end
+    for id, skill in list:gmatch("(%d+)=(%d+)") do
+        local p = entry.professions[tonumber(id)]
+        if p then
+            p.skill = tonumber(skill)
+        end
+    end
+    ns.Refresh()
+end
 
 function handlers.D(sender, rest)
     local version, digest = rest:match("^(%d+):(%x+)$")

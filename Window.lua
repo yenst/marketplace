@@ -1049,7 +1049,9 @@ function Window.DrawDetail()
             local onlineState = Data.IsOnline(c.state)
             row.dot:SetColorTexture(unpack(onlineState and Theme.online or Theme.offline))
             row.dot:SetAlpha((c.state == "noaddon" or c.state == "pinging") and 0.45 or 1)
-            row.name:SetText(c.name)
+            -- "Billy Joel (215)": their level in this recipe's profession.
+            local p = c.professions and c.professions[recipe.prof]
+            row.name:SetText(c.name .. (p and p.skill and p.skill > 0 and (Theme.Hex(Theme.muted) .. " (" .. p.skill .. ")|r") or ""))
             row.name:SetTextColor(unpack(onlineState and classColor(c.class) or Theme.muted))
             setClassIcon(row.class, c.class)
             row.class:SetDesaturated(not onlineState)
@@ -1091,7 +1093,7 @@ function Window.DrawMemberMenu()
         row:SetShown(e ~= nil)
         if e then
             row.key = e.key or false -- false: "All members"
-            row.label:SetText(e.name)
+            row.label:SetText(e.name .. (e.skill and e.skill > 0 and (Theme.Hex(Theme.muted) .. " (" .. e.skill .. ")|r") or ""))
             local selected = e.key == state.member
             row.label:SetTextColor(unpack(e.key and classColor(e.class) or Theme.text))
             setClassIcon(row.class, e.key and e.class)

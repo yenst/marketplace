@@ -2,6 +2,7 @@
 
 ## 0.1.1-beta (unreleased)
 
+- Profession level next to player names, e.g. "Billy Joel (215)"; levels sync with a one-line update as you skill up.
 - Class icons next to player names.
 - Icons instead of words where the game uses them: recipe sources (trainer, vendor, quest, drop…), the faction crest, the whisper button and the mouse hints; online crafters no longer say "Online" under their name.
 - Member filter: pick a guildmate from the dropdown next to the search (or click a crafter's name) to see only their patterns.
