@@ -314,8 +314,23 @@ end
 local decoders = {}
 local handlers = {}
 local incoming = {}   -- sender -> login index being received
-local requested = {}  -- owner -> hash we already asked someone for
+local requested = {}  -- owner -> { hash, at } we asked someone for
 local offers = {}     -- newcomer -> { [owner] = stamp } we may offer them
+local presence = {}   -- newcomer -> true once we told them we're here
+Sync.guildSeen = {}   -- sent something on GUILD this session: a guildmate
+
+-- A request that got no answer within this many seconds may be retried.
+local REQUEST_TIMEOUT = 30
+
+local function askedRecently(owner, hash)
+    local r = requested[owner]
+    return r and r.hash == hash and time() - r.at < REQUEST_TIMEOUT
+end
+
+local function ask(owner, hash, from)
+    requested[owner] = { hash = hash, at = time() }
+    send("R:" .. Sync.VERSION .. ":" .. owner, "WHISPER", from)
+end
 
 -- Everyone in the guild by short name (value: online or not), or nil
 -- before the roster loads.
@@ -361,33 +376,96 @@ local function inGuild(roster)
     return set
 end
 
-local lastAnnounced
--- Tells the guild what we have; skipped when nothing changed since last
--- time. At login (force) the hello is followed by our index, so whoever
--- holds something newer can send just that.
-function Sync.Announce(force)
-    if not IsInGuild() or not ns.char then
+-- Owner broadcasts -------------------------------------------------------------
+--
+-- Our recipes go to the whole guild at once (B…E on GUILD), so everyone who
+-- is behind catches up from one send. Changes wait DEBOUNCE seconds and come
+-- at most every MIN_INTERVAL, so a run of skill-ups is one broadcast.
+Sync.DEBOUNCE, Sync.MIN_INTERVAL, Sync.REQUEST_DELAY = 30, 120, 2
+local lastBroadcast, lastBroadcastAt = nil, -math.huge
+local broadcastPending, broadcastForced = false, false
+
+local function broadcast()
+    broadcastPending = false
+    local share = myShare()
+    local hash = Sync.Hash(share)
+    if not next(share) or (hash == lastBroadcast and not broadcastForced) then
+        broadcastForced = false
         return
     end
-    local hash = Sync.MyHash()
-    if force or hash ~= lastAnnounced then
-        lastAnnounced = hash
-        debug("hello to guild (" .. hash .. ")")
-        send("H:" .. Sync.VERSION .. ":" .. hash .. ":" .. Sync.code, "GUILD")
-    end
-    local data = force and Sync.GuildData()
-    if data then
-        local lines = {}
-        Sync.Chunk(lines, "X:" .. Sync.VERSION .. ":", Sync.IndexItems(data, inGuild(members())), ",")
-        for _, line in ipairs(lines) do
-            send(line, "GUILD")
-        end
-        send("Y:" .. Sync.VERSION, "GUILD")
-        debug(string.format("index to guild: %d lines", #lines))
+    broadcastForced = false
+    lastBroadcast, lastBroadcastAt = hash, time()
+    local lines = Sync.Encode(share)
+    debug(string.format("our recipes to the guild: %d lines", #lines))
+    for _, line in ipairs(lines) do
+        send(line, "GUILD")
     end
 end
 
--- Someone's recipes changed (or they logged in): ask for them if ours differ.
+-- forced: someone asked, so send even if nothing changed since the last one.
+local function scheduleBroadcast(delay, forced)
+    broadcastForced = broadcastForced or forced
+    if broadcastPending then
+        return
+    end
+    broadcastPending = true
+    -- Asked for: at most every 15s, however many ask.
+    delay = math.max(delay, lastBroadcastAt + (forced and 15 or Sync.MIN_INTERVAL) - time())
+    C_Timer.After(delay, broadcast)
+end
+
+-- Asks the server for the guild roster (needed to tell guildmates from
+-- strangers and who's online).
+function Sync.RequestRoster()
+    if C_GuildInfo and C_GuildInfo.GuildRoster then
+        C_GuildInfo.GuildRoster()
+    elseif GuildRoster then
+        GuildRoster()
+    end
+end
+
+-- Tells the guild what we have. At login (force) that's a hello plus our
+-- index, so whoever holds something newer can send just that; afterwards a
+-- changed scan schedules a broadcast of our recipes.
+function Sync.Announce(force, tries)
+    if not IsInGuild() or not ns.char then
+        return
+    end
+    if not force then
+        scheduleBroadcast(Sync.DEBOUNCE)
+        return
+    end
+    local data = Sync.GuildData()
+    if not data then
+        -- The guild name isn't known yet right after login: try again.
+        tries = (tries or 0) + 1
+        if tries <= 6 then
+            C_Timer.After(5, function() Sync.Announce(true, tries) end)
+        end
+        return
+    end
+    local hash = Sync.MyHash()
+    debug("hello to guild (" .. hash .. ")")
+    send("H:" .. Sync.VERSION .. ":" .. hash .. ":" .. Sync.code, "GUILD")
+    local lines = {}
+    Sync.Chunk(lines, "X:" .. Sync.VERSION .. ":", Sync.IndexItems(data, inGuild(members())), ",")
+    for _, line in ipairs(lines) do
+        send(line, "GUILD")
+    end
+    send("Y:" .. Sync.VERSION, "GUILD")
+    debug(string.format("index to guild: %d lines", #lines))
+end
+
+-- One line on GUILD to say we run Marketplace, once per newcomer.
+local function sayPresent(newcomer)
+    if presence[newcomer] then
+        return
+    end
+    presence[newcomer] = true
+    send("A:" .. Sync.VERSION .. ":" .. Sync.MyHash(), "GUILD")
+end
+
+-- Someone logged in: say we're here, and ask for their recipes if ours differ.
 function handlers.H(sender, rest, channel)
     local version, hash = rest:match("^(%d+):(%x+)")
     if version ~= Sync.VERSION then
@@ -396,10 +474,22 @@ function handlers.H(sender, rest, channel)
     local data = Sync.GuildData()
     local known = data and data[sender]
     debug(string.format("hello from %s over %s (%s)", sender, channel, known and known.hash == hash and "up to date" or "new"))
+    if channel ~= "GUILD" then
+        return
+    end
+    presence[sender] = nil
     if data and (not known or known.hash ~= hash) and hash ~= Sync.Hash({}) then
-        C_Timer.After(1 + math.random() * 3, function() send("R:" .. Sync.VERSION, "WHISPER", sender) end)
+        C_Timer.After(1 + math.random() * 3, function()
+            sayPresent(sender)
+            send("R:" .. Sync.VERSION, "WHISPER", sender)
+        end)
+    else
+        C_Timer.After(math.random() * 6, function() sayPresent(sender) end)
     end
 end
+
+-- "I run Marketplace" (an answer to someone's hello): Sync.seen is enough.
+function handlers.A() end
 
 function handlers.R(sender, rest)
     local version, owner = rest:match("^(%d+):?(.*)$")
@@ -408,8 +498,10 @@ function handlers.R(sender, rest)
     end
     local lines
     if owner == "" then
-        lines = Sync.Encode(myShare())
-        debug(string.format("%s asked for our recipes: sending %d lines", sender, #lines))
+        -- Others are likely behind too (we just logged in): one broadcast.
+        debug(sender .. " asked for our recipes")
+        scheduleBroadcast(Sync.REQUEST_DELAY, true)
+        return
     else
         local data = Sync.GuildData()
         local entry = data and data[owner]
@@ -462,6 +554,7 @@ function handlers.Y(sender, rest)
     end
     if next(mine) and not (theirCopy and theirCopy.hash == myHash) then
         C_Timer.After(0.5 + math.random() * 2, function()
+            sayPresent(sender)
             debug("sending our recipes to newcomer " .. sender)
             for _, line in ipairs(Sync.Encode(myShare())) do
                 send(line, "WHISPER", sender)
@@ -499,9 +592,8 @@ function handlers.Y(sender, rest)
     end
 
     for _, owner in ipairs(Sync.Wanted(theirs, data, skip)) do
-        if requested[owner] ~= theirs[owner].hash then
-            requested[owner] = theirs[owner].hash
-            send("R:" .. Sync.VERSION .. ":" .. owner, "WHISPER", sender)
+        if not askedRecently(owner, theirs[owner].hash) then
+            ask(owner, theirs[owner].hash, sender)
         end
     end
 end
@@ -531,9 +623,8 @@ function handlers.O(sender, rest)
         return
     end
     for _, owner in ipairs(Sync.Wanted(offered, data, relaySkip(members(), sender))) do
-        if requested[owner] ~= offered[owner].hash then
-            requested[owner] = offered[owner].hash
-            send("R:" .. Sync.VERSION .. ":" .. owner, "WHISPER", sender)
+        if not askedRecently(owner, offered[owner].hash) then
+            ask(owner, offered[owner].hash, sender)
         end
     end
 end
@@ -551,8 +642,9 @@ local function feed(sender, line)
         data[sender] = { professions = professions, hash = hash, stamp = stamp, updated = time() }
         debug("received " .. sender .. "'s recipes")
     else
-        local known = data[owner]
-        if isSelf(owner) or (known and (known.hash == hash or entryStamp(known) >= stamp)) then
+        local known, roster = data[owner], members()
+        if isSelf(owner) or (known and (known.hash == hash or entryStamp(known) >= stamp))
+            or (roster and roster[shortName(owner)] == nil) then
             return
         end
         -- updated: the owner's scan, the last time we know they were on.
@@ -574,11 +666,22 @@ function Sync.OnMessage(prefix, text, channel, sender)
     if Sync.IsMe(sender) then
         return
     end
+    -- Only guildmates: GUILD messages come from the guild; a whisper counts
+    -- if its sender is on the roster or has spoken on GUILD this session.
+    if channel == "GUILD" then
+        Sync.guildSeen[sender] = true
+    elseif not Sync.guildSeen[sender] then
+        local roster = members()
+        if not (roster and roster[shortName(sender)] ~= nil) then
+            debug("ignored a whisper from " .. sender .. " (not in the guild)")
+            return
+        end
+    end
     Sync.seen[sender] = time()
     local kind, rest = text:match("^(%u):(.*)$")
     if handlers[kind] then
         handlers[kind](sender, rest, channel)
-    elseif kind and channel == "WHISPER" then
+    elseif kind then
         feed(sender, text)
     end
 end

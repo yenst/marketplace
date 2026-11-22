@@ -45,7 +45,9 @@ function Data.Crafters(ctx)
         if not taken[short] then
             local r = (ctx.roster or {})[short]
             local state = "offline"
-            if (ctx.seen or {})[sender] then
+            if r and not r.online then
+                state = "offline" -- logged off since we last heard from them
+            elseif (ctx.seen or {})[sender] then
                 state = "addon"
             elseif r and r.online then
                 state = "noaddon"

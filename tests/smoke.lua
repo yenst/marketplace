@@ -208,6 +208,7 @@ addon("Y:1", "GUILD", "Dan-Mirage")
 assert(#out == 0, "an up-to-date newcomer gets no traffic")
 
 -- Older relayed copies and copies of ourselves are ignored.
+addon("A:1:abcd", "GUILD", "Fenna-Mirage")
 local oldEve = { [197] = { id = 197, name = "Tailoring", skill = 1, maxSkill = 75, scannedAt = 10, recipes = { [2329] = 0 }, categories = {} } }
 for _, line in ipairs((ns.Sync.Encode(oldEve, "Eve-Mirage"))) do addon(line, "WHISPER", "Fenna-Mirage") end
 assert(MarketplaceDB.guilds["Test Guild"]["Eve-Mirage"].hash == eveHash, "older copy ignored")
@@ -259,10 +260,30 @@ out = {}
 addon("R:1", "WHISPER", "Dan-Mirage")
 local decoder, got = ns.Sync.NewDecoder()
 for _, m in ipairs(out) do
-    assert(m.target == "Dan-Mirage" and m.channel == "WHISPER", "our recipes go to Dan by whisper")
+    assert(m.channel == "GUILD", "asked for our recipes: one broadcast to the guild")
     got = decoder.Feed(m.text) or got
 end
 assert(got and got[164], "Dan gets our Blacksmithing")
+
+-- A new scan: one broadcast to the guild; nothing again until it changes.
+out = {}
+ns.Sync.Announce()
+assert(#out == 0, "unchanged since the last broadcast: nothing sent")
+me.professions[164].recipes[9999] = 7
+ns.Sync.Announce()
+assert(#out > 0 and out[1].channel == "GUILD" and out[1].text:find("^B:1:%x+$"), "changed recipes go to the guild")
+for _, m in ipairs(out) do assert(m.channel == "GUILD", "no whispers for an update") end
+me.professions[164].recipes[9999] = nil
+
+-- Someone logging in hears from us once on GUILD, even when up to date.
+out = {}
+addon("H:1:" .. danHash .. ":abc123", "GUILD", "Dan-Mirage")
+assert(#out == 1 and out[1].channel == "GUILD" and out[1].text:find("^A:1:%x+$"), "presence reply")
+
+-- Strangers can't whisper data in.
+local zed = { [197] = { id = 197, name = "Tailoring", skill = 1, maxSkill = 75, scannedAt = 5, recipes = { [1] = 0 }, categories = {} } }
+for _, line in ipairs((ns.Sync.Encode(zed))) do addon(line, "WHISPER", "Zed-Elsewhere") end
+assert(not MarketplaceDB.guilds["Test Guild"]["Zed-Elsewhere"], "whispers from outside the guild are ignored")
 
 SlashCmdList.MARKETPLACE("guild")
 assert(chat[#chat - 1]:find("Dan%-Mirage: Cooking 150 %(1%) · addon running"), "/mkt guild lists Dan")

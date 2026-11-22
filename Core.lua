@@ -115,6 +115,7 @@ function handlers.PLAYER_LOGIN()
     fixRealm()
     ns.Theme.Load()
     C_Timer.After(5, fixRealm)
+    ns.Sync.RequestRoster()
     -- Give the guild roster and realm name a moment before saying hello.
     C_Timer.After(10, function() ns.Sync.Announce(true) end)
 end

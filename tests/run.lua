@@ -237,6 +237,15 @@ local function ctx()
         seen = { ["Dan Pal"] = 5 },
     }
 end
+test("Data.Crafters: someone who logged off isn't online, even if seen", function()
+    local c = ctx()
+    c.seen["Kael Sun"] = 5
+    for _, crafter in ipairs(ns.Data.Crafters(c)) do
+        if crafter.name == "Kael Sun" then eq(crafter.state, "offline") end
+        if crafter.name == "Dan Pal" then eq(crafter.state, "addon") end
+    end
+end)
+
 local META = { [1] = { name = "Arcanite Reaper", reagents = { { 500, 12 } } }, [2] = { name = "Lionheart Helm" }, [3] = { name = "Imperial Plate" }, [7] = { name = "Chili" } }
 local function metaOf(id) return META[id] end
 local function itemName(id) return id == 500 and "Arcanite Bar" or nil end
