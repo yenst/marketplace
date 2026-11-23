@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3-beta
+
+- Item tooltips (bags, vendors, auction house, links) show who in your guild can craft the item: online crafters first in their class colour, offline ones grey, with their profession level.
+- Refresh button at the bottom of the window: compares with the guild right away instead of waiting for the 15-minute check. Only recipes newer than the ones you have are fetched, and the line next to it says how it went ("Up to date", "Updated 3 guildmates", …).
+
 ## 0.1.2-beta
 
 - Track recipe checkbox in the recipe details, like the profession window's: its reagents go to your objective tracker.
