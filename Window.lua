@@ -758,6 +758,18 @@ local function buildFooter()
     line:SetPoint("BOTTOMRIGHT", 0, 26)
     frame.footer = W.Text(frame.browse, 11, Theme.muted)
     frame.footer:SetPoint("BOTTOMLEFT", 12, 8)
+    -- Compares with the guild now; how it went is written next to it.
+    frame.refresh = W.Button(frame.browse, "Refresh", 64, 18, function()
+        ns.Sync.RequestLatest()
+        Window.DrawSync()
+    end)
+    frame.refresh:SetPoint("BOTTOMRIGHT", -12, 4)
+    W.Tooltip(frame.refresh, function(tip)
+        tip:AddLine("Refresh")
+        tip:AddLine("Asks the guild for recipes newer than the ones you have. What you already have isn't sent again.", 1, 1, 1, true)
+    end)
+    frame.syncText = W.Text(frame.browse, 11, Theme.muted, "RIGHT")
+    frame.syncText:SetPoint("RIGHT", frame.refresh, "LEFT", -8, 0)
 end
 
 local function buildTabs()
@@ -1159,6 +1171,17 @@ local function drawFooter()
     end
 end
 
+-- The Refresh button and how the last refresh went.
+function Window.DrawSync()
+    if not frame or not frame:IsShown() then
+        return
+    end
+    local phase, got, total = ns.Sync.RefreshState()
+    frame.syncText:SetText(Data.RefreshText(phase, got, total))
+    frame.refresh:SetDisabled(model.rosterSize == 0 or phase == "checking" or phase == "updating")
+end
+ns.Sync.OnRefresh = Window.DrawSync
+
 function Window.Refresh()
     if not frame or not frame:IsShown() then
         return
@@ -1187,6 +1210,7 @@ function Window.Refresh()
     Window.DrawList()
     Window.DrawDetail()
     drawFooter()
+    Window.DrawSync()
     Window.DrawMemberMenu()
 end
 

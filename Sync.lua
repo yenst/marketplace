@@ -729,6 +729,76 @@ function want(owner, hash)
     end
 end
 
+-- Refresh on demand ------------------------------------------------------------
+
+-- The window's Refresh button posts our digest right away. Whoever holds
+-- something different lists the buckets that differ, as after a hello, and
+-- reconciling those lists asks only for copies newer than ours (and sends
+-- the ones where ours is newer). Nobody answers a digest they agree with,
+-- so silence means we're up to date.
+Sync.REFRESH_GAP = 30     -- seconds between two refreshes
+Sync.REFRESH_QUIET = 10   -- no list for us by then: nobody differs
+Sync.REFRESH_SETTLE = 6   -- nothing more to wait for: done after this long
+Sync.REFRESH_GIVE_UP = 45 -- copies we asked for didn't come: stop waiting
+
+-- { at, phase, gen, wanted = { [owner] = hash }, pending, got, listed, done }
+-- phase: "checking", "updating", then "current", "alone", "updated" or "partial".
+local refresh
+
+local function refreshChanged()
+    if Sync.OnRefresh then
+        Sync.OnRefresh()
+    end
+end
+
+-- Guildmates running Marketplace who are online (or, without a roster we
+-- can trust, heard this session).
+local function peersOnline()
+    local roster, n = members(), 0
+    for sender in pairs(Sync.seen) do
+        if not roster or roster[shortName(sender)] then
+            n = n + 1
+        end
+    end
+    return n
+end
+
+local function refreshFinish(r)
+    if r.pending > 0 then
+        r.phase = "partial"
+    elseif r.got > 0 then
+        r.phase = "updated"
+    elseif r.listed or peersOnline() > 0 then
+        r.phase = "current"
+    else
+        r.phase = "alone"
+    end
+    r.done = time()
+    refreshChanged()
+end
+
+-- Something happened: the refresh is over once nothing else does for delay.
+local function refreshWait(r, delay)
+    r.gen = r.gen + 1
+    local gen = r.gen
+    C_Timer.After(delay, function()
+        if refresh == r and r.gen == gen and not r.done then
+            refreshFinish(r)
+        end
+    end)
+end
+
+local function refreshing()
+    return refresh and not refresh.done and refresh or nil
+end
+
+-- phase, copies received, copies asked for; nil before the first refresh.
+function Sync.RefreshState()
+    if refresh then
+        return refresh.phase, refresh.got, refresh.got + refresh.pending
+    end
+end
+
 -- Bucket lists ----------------------------------------------------------------
 
 local pendingList = {}  -- "to|bucket" -> token
@@ -779,6 +849,7 @@ local function answerDigest(to, digest)
 end
 
 -- A complete bucket list: ask for what's newer, send what the list lacks.
+-- Returns the owners whose listed copy we want.
 local function reconcile(list, bucket)
     local roster = members()
     local state = myState(roster)
@@ -801,6 +872,7 @@ local function reconcile(list, bucket)
     for _, owner in ipairs(offer) do
         schedule(owner, jitter(owner))
     end
+    return wantedOwners
 end
 
 -- Handlers --------------------------------------------------------------------
@@ -880,11 +952,25 @@ function handlers.L(sender, rest)
     for owner, hash, stamp in list:gmatch("([^,=]+)=(%x+)=(%d+)") do
         into.list[owner] = { hash = hash, stamp = tonumber(stamp) }
     end
+    -- A list for us while the Refresh button waits: it counts what's coming.
+    local r = isSelf(to) and refreshing()
+    if r then
+        r.phase, r.listed = "updating", true
+    end
     if more == "0" then
         incoming[key] = nil
         if ready() then
-            reconcile(into.list, bucket)
+            for _, owner in ipairs(reconcile(into.list, bucket)) do
+                if r and not r.wanted[owner] then
+                    r.wanted[owner] = into.list[owner].hash
+                    r.pending = r.pending + 1
+                end
+            end
         end
+    end
+    if r then
+        refreshWait(r, (more ~= "0" or r.pending > 0) and Sync.REFRESH_GIVE_UP or Sync.REFRESH_SETTLE)
+        refreshChanged()
     end
 end
 
@@ -971,6 +1057,12 @@ local function store(sender, professions, hash, owner, stamp)
         debug(string.format("received %s's recipes via %s", owner, sender))
     end
     requested[owner or sender] = nil
+    local r = refreshing()
+    if r and r.wanted[owner or sender] then
+        r.wanted[owner or sender] = nil
+        r.pending, r.got = r.pending - 1, r.got + 1
+        refreshWait(r, r.pending > 0 and Sync.REFRESH_GIVE_UP or Sync.REFRESH_SETTLE)
+    end
     ns.Refresh()
 end
 
@@ -1067,6 +1159,26 @@ function Sync.Check(now)
     end
     Sync.RequestRoster()
     control("D:" .. Sync.VERSION .. ":" .. Sync.Digest(myState(members())))
+end
+
+-- The Refresh button: compare with the guild now. Returns true, or false and
+-- why not: "guild" (not in one, or not ready yet) or "wait" (one is running,
+-- or just ran).
+function Sync.RequestLatest()
+    if not IsInGuild() or not ready() then
+        return false, "guild"
+    end
+    if refresh and (not refresh.done or time() - refresh.at < Sync.REFRESH_GAP) then
+        return false, "wait"
+    end
+    local r = { at = time(), phase = "checking", gen = 0, wanted = {}, pending = 0, got = 0 }
+    refresh = r
+    Sync.RequestRoster()
+    debug("refresh: digest to the guild")
+    control("D:" .. Sync.VERSION .. ":" .. Sync.Digest(myState(members())))
+    refreshWait(r, Sync.REFRESH_QUIET)
+    refreshChanged()
+    return true
 end
 
 -- Chat lines for /mkt guild: one per guildmate we have data for.

@@ -368,6 +368,34 @@ ns.Sync.Check()
 flush()
 assert(#out == 0, "someone's digest matched ours: no check needed")
 time = realTime
+
+-- Refresh button: our digest goes out; nobody lists anything, so we're up
+-- to date. Straight after, another refresh isn't sent.
+out = {}
+assert(ns.Sync.RefreshState() == nil, "no refresh yet")
+assert(ns.Sync.RequestLatest(), "refresh starts")
+assert(sent("^D:2:%x+$") and ns.Sync.RefreshState() == "checking", "refresh posts our digest")
+flush()
+assert(ns.Sync.RefreshState() == "current", "silence: up to date, got " .. tostring(ns.Sync.RefreshState()))
+local again, why = ns.Sync.RequestLatest()
+assert(not again and why == "wait", "no second refresh straight away")
+-- Later: Gus lists a newer copy of Zed for us. We ask for it, and only it.
+time = function() return realTime() + 60 end
+out = {}
+assert(ns.Sync.RequestLatest(), "refresh again after the gap")
+local zed = { [197] = { id = 197, name = "Tailoring", skill = 9, maxSkill = 75, recipes = { [2385] = 0 }, categories = {} } }
+local zedLines, zedHash = ns.Sync.Encode(zed, "Zed-Mirage", 77)
+addon("L:2:Tester Joel:" .. ns.Sync.BucketOf("Zed-Mirage") .. ":0:Zed-Mirage=" .. zedHash .. "=77,Eve-Mirage=" .. eveHash .. "=50", "GUILD", "Gus-Mirage")
+local phase, got, total = ns.Sync.RefreshState()
+assert(phase == "updating" and got == 0 and total == 1, "one copy to come (Eve's we have): " .. tostring(phase) .. " " .. tostring(total))
+for _, line in ipairs(zedLines) do addon(line, "GUILD", "Gus-Mirage") end
+flush()
+assert(not sent("^R:.*Eve"), "Eve's copy isn't asked for again")
+phase, got, total = ns.Sync.RefreshState()
+assert(phase == "updated" and got == 1 and total == 1, "refresh done: " .. tostring(phase))
+assert(MarketplaceDB.guilds["Test Guild"]["Zed-Mirage"].hash == zedHash, "Zed stored")
+MarketplaceDB.guilds["Test Guild"]["Zed-Mirage"] = nil
+time = realTime
 C_Timer.After = function(_, fn) fn() end
 
 SlashCmdList.MARKETPLACE("guild")
@@ -576,8 +604,13 @@ ns.AddPatternLines(tip, 13939)
 local tipText = table.concat(tipLines, "\n")
 assert(tipText:find("Known by: .*Dan.*%(150%)"), "pattern tooltip: " .. tipText)
 tipLines = {}
-ns.AddPatternLines(tip, 13927) -- the fish itself, not a pattern
-assert(#tipLines == 0, "only patterns get lines")
+ns.AddPatternLines(tip, 13927) -- a fish nobody in the guild can cook
+assert(#tipLines == 0, "nothing on items nobody can craft")
+-- Crafted items: Dan cooks Spotted Yellowtail.
+tipLines = {}
+ns.AddPatternLines(tip, 6887)
+tipText = table.concat(tipLines, "\n")
+assert(tipText:find("Crafted by: .*Dan.*%(150%)") and not tipText:find("Known by"), "crafted item tooltip: " .. tipText)
 
 -- The Guild & Communities window (loaded on demand) gets a Marketplace tab.
 CommunitiesFrame = CreateFrame("Frame", "CommunitiesFrame")

@@ -514,6 +514,32 @@ test("Pattern tooltip people: who knows it, who could learn it", function()
     eq(#known, 0)
 end)
 
+test("Crafted item tooltip: who can make it, online first", function()
+    local index = ns.Data.CraftedIndex({ [164] = { [3] = { s = 200, c = 900 }, [1] = { s = 1, c = 900 }, [4] = { s = 1 } } })
+    eq(table.concat(index[900], ","), "1,3")
+    eq(index[901], nil)
+    local crafters = ns.Data.Crafters(ctx())
+    for _, c in ipairs(crafters) do
+        if c.professions[164] then c.professions[164].skill = 100 end
+    end
+    local recipes = ns.Data.Index(crafters)
+    local out = {}
+    for _, p in ipairs(ns.Data.Makers(index[900], recipes)) do
+        out[#out + 1] = p.name .. (p.offline and "-" or "+") .. tostring(p.skill)
+    end
+    eq(table.concat(out, ","), "Billy Joel+100,Dan Pal+100,Fenna Frost+100,Kael Sun-100", "each crafter once, offline last")
+    eq(#ns.Data.Makers({ 4 }, recipes), 0)
+    eq(#ns.Data.Makers(nil, recipes), 0)
+end)
+
+test("Data.RefreshText", function()
+    eq(ns.Data.RefreshText(nil), "")
+    eq(ns.Data.RefreshText("current", 0, 0), "Up to date")
+    eq(ns.Data.RefreshText("updating", 1, 3), "Updating: 1 of 3")
+    eq(ns.Data.RefreshText("updated", 1, 1), "Updated 1 guildmate")
+    eq(ns.Data.RefreshText("partial", 2, 5), "Updated 2 of 5; the rest will follow")
+end)
+
 test("Data.Coverage counts patterns the guild knows", function()
     local recipes = {
         [1] = { prof = 164, crafters = { {} } },

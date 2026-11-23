@@ -1,11 +1,12 @@
 local _, ns = ...
 
--- Pattern tooltips (anywhere: bags, vendors, the auction house, links)
--- get who in the guild already knows the recipe and who could learn it.
+-- Item tooltips (anywhere: bags, vendors, the auction house, links).
+-- Patterns get who in the guild already knows the recipe and who could
+-- learn it; items someone in the guild can craft get who that is.
 local MAX_NAMES = 5
-local patterns
+local patterns, crafted
 
--- dim: grey names instead of class colours.
+-- dim: grey names instead of class colours (also for anyone marked offline).
 local function names(list, dim)
     local muted = ns.Theme.Hex(ns.Theme.muted)
     local parts = {}
@@ -14,7 +15,7 @@ local function names(list, dim)
             parts[#parts + 1] = muted .. "and " .. (#list - MAX_NAMES) .. " more|r"
             break
         end
-        local c = not dim and p.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[p.class]
+        local c = not dim and not p.offline and p.class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[p.class]
         local name = c and string.format("|cff%02x%02x%02x%s|r", c.r * 255, c.g * 255, c.b * 255, p.name) or p.name
         parts[#parts + 1] = name .. (p.skill and p.skill > 0 and (muted .. " (" .. p.skill .. ")|r") or "")
     end
@@ -26,14 +27,27 @@ local function addLines(tooltip, itemID)
         return
     end
     patterns = patterns or ns.Data.PatternIndex(ns.RecipeDB)
-    local pattern = patterns[itemID]
-    if not pattern then
+    crafted = crafted or ns.Data.CraftedIndex(ns.RecipeDB)
+    local pattern, made = patterns[itemID], crafted[itemID]
+    if not pattern and not made then
         return
     end
     local model = ns.Window.Model()
-    local known, canLearn, tooLow = ns.Data.PatternPeople(model.recipes[pattern.recipe], model.crafters, pattern.prof, pattern.skill)
+    -- Online crafters first, in their class colour; offline ones grey.
+    local makers = made and ns.Data.Makers(made, model.recipes) or {}
+    if not pattern and #makers == 0 then
+        return -- craftable, but by nobody in the guild: nothing to say
+    end
     tooltip:AddLine(" ")
     tooltip:AddLine("|T" .. ns.ICON .. ":14:14|t Marketplace", 0.55, 0.76, 1)
+    if #makers > 0 then
+        tooltip:AddLine("Crafted by: " .. names(makers), 1, 0.82, 0, true)
+    end
+    if not pattern then
+        tooltip:Show()
+        return
+    end
+    local known, canLearn, tooLow = ns.Data.PatternPeople(model.recipes[pattern.recipe], model.crafters, pattern.prof, pattern.skill)
     if #known > 0 then
         tooltip:AddLine("Known by: " .. names(known), 1, 0.82, 0, true)
     else

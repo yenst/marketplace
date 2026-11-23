@@ -512,3 +512,65 @@ function Data.PatternPeople(recipe, crafters, prof, skill)
     return known, canLearn, tooLow
 end
 
+-- Crafted item tooltips ----------------------------------------------------------
+
+-- Items to the recipes that make them: { [itemID] = { recipeID, ... } }.
+function Data.CraftedIndex(catalog)
+    local index = {}
+    for _, entries in pairs(catalog or {}) do
+        for recipeID, entry in pairs(entries) do
+            if entry.c then
+                index[entry.c] = index[entry.c] or {}
+                table.insert(index[entry.c], recipeID)
+            end
+        end
+    end
+    for _, list in pairs(index) do
+        table.sort(list)
+    end
+    return index
+end
+
+-- Everyone who knows one of the recipes, online first, then by name:
+-- { { name, skill, class, state, offline } }.
+--   recipeIDs = a Data.CraftedIndex entry, recipes = Data.Index recipes
+function Data.Makers(recipeIDs, recipes)
+    local list, seen = {}, {}
+    for _, id in ipairs(recipeIDs or {}) do
+        local r = recipes[id]
+        for _, c in ipairs(r and r.crafters or {}) do
+            if not seen[c.key] then
+                seen[c.key] = true
+                local p = c.professions and c.professions[r.prof]
+                list[#list + 1] = { name = c.name, skill = p and p.skill, class = c.class, state = c.state, offline = not online(c.state) }
+            end
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.offline ~= b.offline then
+            return b.offline
+        end
+        return a.name < b.name
+    end)
+    return list
+end
+
+-- Refresh button -----------------------------------------------------------------
+
+-- The line next to the Refresh button, from Sync.RefreshState().
+function Data.RefreshText(phase, got, total)
+    if phase == "checking" then
+        return "Checking with the guild…"
+    elseif phase == "updating" then
+        return total > 0 and string.format("Updating: %d of %d", got, total) or "Comparing with the guild…"
+    elseif phase == "current" then
+        return "Up to date"
+    elseif phase == "alone" then
+        return "Nobody else with Marketplace is online"
+    elseif phase == "updated" then
+        return "Updated " .. ns.Plural(got, "guildmate")
+    elseif phase == "partial" then
+        return string.format("Updated %d of %d; the rest will follow", got, total)
+    end
+    return ""
+end
