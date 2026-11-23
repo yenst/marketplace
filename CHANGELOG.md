@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.7
+
+- The Track recipe checkbox sat on top of the "Mats cost" tile: it's now in the recipe header, under the favorite star.
+
 ## 0.1.6
 
 - The whisper button opened a tell without the recipe link in it: fixed. It now starts the message with "Hi! Could you craft [recipe] for me?".
