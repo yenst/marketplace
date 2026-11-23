@@ -133,6 +133,9 @@ function W.IconButton(parent, size, texture, fallback, tooltip, onClick)
     button:SetScript("OnEnter", function(self)
         self.hover = true
         paint(self)
+        if not tooltip then
+            return
+        end
         local title, text = tooltip(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:AddLine(title, 1, 1, 1)

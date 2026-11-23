@@ -775,9 +775,7 @@ end
 local function buildTabs()
     frame.tabs = {}
     for i = 1, MAX_TABS do
-        local tab = W.IconButton(frame.browse, TAB_SIZE, nil, "?", function(self)
-            return self.title or "", self.hint
-        end, function(self)
+        local tab = W.IconButton(frame.browse, TAB_SIZE, nil, "?", nil, function(self)
             state.prof, state.offset, state.selected = self.prof, 0, nil
             Window.Refresh()
         end)
@@ -810,20 +808,12 @@ end
 
 -- Drawing ---------------------------------------------------------------------
 
-local function crafterHint(crafters)
-    local n = 0
-    for _ in pairs(crafters) do
-        n = n + 1
-    end
-    return n > 0 and ns.Plural(n, "crafter") or "Nobody in your guild has shared this yet"
-end
-
 local function drawTabs()
     local list, byId = Data.Tabs(gameProfessions(), model.professions)
     model.tabs = byId
     local entries = { { prof = "all", label = "All professions", texture = ns.ICON } }
     for _, p in ipairs(list) do
-        entries[#entries + 1] = { prof = p.id, label = p.name, texture = professionTexture(p.id), hint = crafterHint(p.crafters) }
+        entries[#entries + 1] = { prof = p.id, label = p.name, texture = professionTexture(p.id) }
     end
     if state.prof ~= "all" and not byId[state.prof] then
         state.prof = "all"
@@ -832,7 +822,7 @@ local function drawTabs()
         local e = entries[i]
         tab:SetShown(e ~= nil)
         if e then
-            tab.prof, tab.title, tab.hint = e.prof, e.label, e.hint
+            tab.prof, tab.title = e.prof, e.label
             tab:SetIcon(e.texture, e.label:sub(1, 2))
             tab:SetSelected(state.prof == e.prof)
         end
