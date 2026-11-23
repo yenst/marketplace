@@ -396,6 +396,30 @@ assert(phase == "updated" and got == 1 and total == 1, "refresh done: " .. tostr
 assert(MarketplaceDB.guilds["Test Guild"]["Zed-Mirage"].hash == zedHash, "Zed stored")
 MarketplaceDB.guilds["Test Guild"]["Zed-Mirage"] = nil
 time = realTime
+
+-- Right after login the roster only lists who's online. Eve (offline)
+-- isn't on it yet, but that doesn't mean she left: she's still relayed.
+-- Once the roster has kept its size for a minute it's believed.
+local oldNum, oldInfo = GetNumGuildMembers, GetGuildRosterInfo
+local rows = { "Tester Joel", "Gus-Mirage" }
+GetNumGuildMembers = function() return #rows end
+GetGuildRosterInfo = function(i) return rows[i], nil, nil, nil, nil, nil, nil, nil, true end
+out = {}
+addon("L:2:Hana-Mirage:" .. eveBucket .. ":0:", "GUILD", "Gus-Mirage")
+flush()
+assert(sent("^B:2:" .. eveHash .. ":50:Eve%-Mirage$"), "roster still filling in: Eve is relayed")
+time = function() return realTime() + 61 end
+out = {}
+addon("L:2:Hana-Mirage:" .. eveBucket .. ":0:", "GUILD", "Gus-Mirage")
+flush()
+assert(not sent("Eve%-Mirage"), "settled roster without Eve: she left, no relay")
+GetNumGuildMembers = function() return #rows + 3 end -- the game says there are more than it lists
+out = {}
+addon("L:2:Hana-Mirage:" .. eveBucket .. ":0:", "GUILD", "Gus-Mirage")
+flush()
+assert(sent("^B:2:" .. eveHash .. ":50:Eve%-Mirage$"), "rows missing from the roster: nobody counts as left")
+GetNumGuildMembers, GetGuildRosterInfo = oldNum, oldInfo
+time = realTime
 C_Timer.After = function(_, fn) fn() end
 
 SlashCmdList.MARKETPLACE("guild")

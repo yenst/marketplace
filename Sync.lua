@@ -513,19 +513,30 @@ end
 
 -- Everyone in the guild by short name (value: online or not), or nil when
 -- it can't be trusted to say who left: not loaded yet, offline members
--- hidden, or our own name missing from it (the roster spells names
--- differently from addon messages).
+-- hidden, rows missing (the game says there are more members than it
+-- lists), still changing (right after login it fills in over a few
+-- seconds, online members first), or our own name missing from it (the
+-- roster spells names differently from addon messages).
+Sync.ROSTER_SETTLE = 60 -- seconds the roster must have kept its size
+local rosterSize, rosterSince
 local function members()
-    local n = GetNumGuildMembers and GetNumGuildMembers() or 0
-    if n == 0 or (GetGuildRosterShowOffline and not GetGuildRosterShowOffline()) then
+    local total = GetNumGuildMembers and GetNumGuildMembers() or 0
+    if total == 0 or (GetGuildRosterShowOffline and not GetGuildRosterShowOffline()) then
         return nil
     end
-    local set = {}
-    for i = 1, n do
+    local set, named = {}, 0
+    for i = 1, total do
         local name, _, _, _, _, _, _, _, isOnline = GetGuildRosterInfo(i)
         if name then
             set[shortName(name)] = isOnline and true or false
+            named = named + 1
         end
+    end
+    if named ~= rosterSize then
+        rosterSize, rosterSince = named, time()
+    end
+    if named < total or time() - rosterSince < Sync.ROSTER_SETTLE then
+        return nil
     end
     local me = Sync.selfName or (ns.char and ns.char.fullName)
     if not me or set[shortName(me)] == nil then
