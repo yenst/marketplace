@@ -2,8 +2,6 @@
 
 **Find who in your guild can craft it.** A profession browser for WoW Forever, laid out like the in-game profession window.
 
-> **Beta.** Guild sync is new: please report anything odd on GitHub (link below).
-
 ## What it does
 
 - **Browse your guild's professions.** One tab per profession, or all of them at once. Recipes are grouped by category, and you can search by recipe, reagent or member.

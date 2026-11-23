@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.5
+
+- Out of beta.
+- Profession tabs no longer show a tooltip on mouseover.
+
 ## 0.1.4-beta
 
 - Logging in while a guildmate was already online only passed on your own recipes, not the ones you hold of others: fixed. The guild roster is still filling in right after login, and guildmates missing from it were taken to have left the guild.

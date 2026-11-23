@@ -11,7 +11,7 @@ Slash command: `/marketplace` (or `/mkt`).
 
 ## Status
 
-Beta: on [CurseForge](https://www.curseforge.com/projects/1823257) (project 1823257). Guild sync is new; reports welcome in the issues.
+Released on [CurseForge](https://www.curseforge.com/projects/1823257) (project 1823257). Reports welcome in the issues.
 
 ## Credits
 
