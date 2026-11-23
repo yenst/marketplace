@@ -507,6 +507,32 @@ assert(win.crafters[1].class.shown, "class icon next to Dan")
 assert(win.sourceText.text:find("VendorGossipIcon") and win.sourceText.text:find("Sold in Zone 440"), "sold in Tanaris: " .. win.sourceText.text)
 win.crafters[1].whisper.scripts.OnClick(win.crafters[1].whisper)
 assert(told == "Dan" and inserted:find("Henchant:18238"), "whisper opens a tell with the recipe link")
+-- Newer clients: the chat functions live in ChatFrameUtil, and the game may
+-- have no link for a recipe of a profession we don't have.
+do
+    local oldTell, oldActive, oldLink = ChatFrame_SendTell, ChatEdit_GetActiveWindow, C_TradeSkillUI.GetRecipeLink
+    ChatFrame_SendTell, ChatEdit_GetActiveWindow, C_TradeSkillUI.GetRecipeLink = nil, nil, function() return nil end
+    told, inserted = nil, nil
+    local oldAfter = C_Timer.After
+    local box = { setText = 1, Insert = function(_, text) inserted = text end }
+    ChatFrameUtil = {
+        SendTell = function(name) told = name end,
+        GetActiveWindow = function() return box end,
+    }
+    -- The game fills the edit box in a frame later: nothing goes in before.
+    local waits = {}
+    C_Timer.After = function(_, fn) waits[#waits + 1] = fn end
+    win.crafters[1].whisper.scripts.OnClick(win.crafters[1].whisper)
+    table.remove(waits, 1)()
+    assert(inserted == nil and #waits == 1, "waits while the game still has to set the text")
+    box.setText = 0
+    table.remove(waits, 1)()
+    C_Timer.After = oldAfter
+    assert(told == "Dan" and inserted and inserted:find("Henchant:18238|h[Cooking: Spotted Yellowtail]", 1, true),
+        "whisper through ChatFrameUtil with a built link: " .. tostring(inserted))
+    ChatFrameUtil = nil
+    ChatFrame_SendTell, ChatEdit_GetActiveWindow, C_TradeSkillUI.GetRecipeLink = oldTell, oldActive, oldLink
+end
 
 -- Auctionator: reagent prices, mats total, sell price, shopping list.
 local lists = {}

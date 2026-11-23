@@ -86,6 +86,16 @@ local function withItemLink(id, fn)
     end
 end
 
+-- Puts a link in the open chat edit box. Newer clients have this in
+-- ChatFrameUtil; the old global is the fallback.
+local function insertLink(link)
+    if ChatFrameUtil and ChatFrameUtil.InsertLink then
+        return ChatFrameUtil.InsertLink(link)
+    elseif ChatEdit_InsertLink then
+        return ChatEdit_InsertLink(link)
+    end
+end
+
 -- Shift-click links the item in chat, ctrl-click previews it in the
 -- dressing room. The modifier is read now; the link may come a moment
 -- later if the item still has to load.
@@ -95,9 +105,7 @@ local function modifiedItemClick(id)
     end
     if IsModifiedClick("CHATLINK") then
         withItemLink(id, function(link)
-            if ChatEdit_InsertLink then
-                ChatEdit_InsertLink(link)
-            end
+            insertLink(link)
         end)
     elseif IsModifiedClick("DRESSUP") then
         withItemLink(id, function(link)
@@ -108,9 +116,21 @@ local function modifiedItemClick(id)
     end
 end
 
+-- The game's link for a recipe; where it has none (it doesn't always for
+-- recipes of professions you don't have), one built the same way.
 local function recipeLink(id)
     local T = C_TradeSkillUI
-    return T and T.GetRecipeLink and T.GetRecipeLink(id)
+    local link = T and T.GetRecipeLink and T.GetRecipeLink(id)
+    if link then
+        return link
+    end
+    local meta = ns.Scanner.Meta(id)
+    if not (meta and meta.name) then
+        return nil
+    end
+    local recipe = model.recipes[id]
+    local label = recipe and recipe.profName and (recipe.profName .. ": " .. meta.name) or meta.name
+    return string.format("|cffffd000|Henchant:%d|h[%s]|h|r", id, label)
 end
 
 local function professionTexture(id)
@@ -227,15 +247,50 @@ local function iconTile(parent, size)
     return tile
 end
 
+-- Opens a tell to name with a request for the recipe in it. Newer clients
+-- moved the chat functions into ChatFrameUtil; the old globals are the
+-- fallback.
+local function activeEditBox()
+    local U = ChatFrameUtil
+    return (U and U.GetActiveWindow and U.GetActiveWindow())
+        or (ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow())
+        or nil
+end
+
 local function whisper(name, link)
-    if ChatFrame_SendTell then
+    local U = ChatFrameUtil
+    if U and U.SendTell then
+        U.SendTell(name)
+    elseif ChatFrame_SendTell then
         ChatFrame_SendTell(name)
+    elseif U and U.OpenChat then
+        U.OpenChat("/w " .. name .. " ")
     elseif ChatFrame_OpenChat then
         ChatFrame_OpenChat("/w " .. name .. " ")
     end
-    local editBox = ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow()
-    if editBox and link then
-        editBox:Insert("Hi! Could you craft " .. link .. " for me? ")
+    if not link then
+        return
+    end
+    -- The game writes "/w name " into the edit box on its next frame
+    -- (editBox.setText is 1 until then) and turns it into the tell header;
+    -- anything inserted before that is overwritten. So wait for it.
+    local text = "Hi! Could you craft " .. link .. " for me? "
+    local tries = 0
+    local function insert()
+        local editBox = activeEditBox()
+        if editBox and editBox.setText ~= 1 then
+            editBox:Insert(text)
+            return
+        end
+        tries = tries + 1
+        if tries <= 20 and C_Timer and C_Timer.After then
+            C_Timer.After(0.05, insert)
+        end
+    end
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0.05, insert)
+    else
+        insert()
     end
 end
 
@@ -486,8 +541,8 @@ local function buildList()
                 return
             end
             local link = recipeLink(item.recipe.id)
-            if link and IsModifiedClick and IsModifiedClick("CHATLINK") and ChatEdit_InsertLink then
-                ChatEdit_InsertLink(link)
+            if link and IsModifiedClick and IsModifiedClick("CHATLINK") then
+                insertLink(link)
                 return
             end
             if IsModifiedClick and IsModifiedClick("DRESSUP") then
