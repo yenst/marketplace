@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4-beta
+
+- Logging in while a guildmate was already online only passed on your own recipes, not the ones you hold of others: fixed. The guild roster is still filling in right after login, and guildmates missing from it were taken to have left the guild.
+
 ## 0.1.3-beta
 
 - Item tooltips (bags, vendors, auction house, links) show who in your guild can craft the item: online crafters first in their class colour, offline ones grey, with their profession level.
