@@ -658,8 +658,9 @@ local function buildDetail()
             T.SetRecipeTracked(state.selected, on, false)
         end
     end)
-    frame.track:SetWidth(140)
-    frame.track:SetPoint("BOTTOMLEFT", 0, 4)
+    frame.track:SetWidth(100)
+    frame.track:SetPoint("TOPRIGHT", 0, -22)
+    frame.selSub:SetPoint("RIGHT", frame.track, "LEFT", -8, 0)
 
     -- Auctionator: mats cost, what's missing and the sell price as small
     -- tiles, plus a shopping list button with Auctionator's logo.
