@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.6
+
+- The whisper button opened a tell without the recipe link in it: fixed. It now starts the message with "Hi! Could you craft [recipe] for me?".
+
 ## 0.1.5
 
 - Out of beta.
