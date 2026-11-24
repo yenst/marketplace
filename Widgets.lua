@@ -1,5 +1,6 @@
 local _, ns = ...
 
+-- Reusable flat UI primitives (panels, buttons, scrollbars, dialogs, search boxes).
 local Theme = ns.Theme
 local W = {}
 ns.W = W
@@ -55,9 +56,9 @@ function W.Tooltip(frame, build)
 end
 
 local function buttonColors(button)
-    local bg = button.selected and Theme.bgHover or (button.hover and Theme.bgHover or Theme.bgRaised)
-    button:SetBackdropColor(unpack(bg))
-    button:SetBackdropBorderColor(unpack((button.hover or button.selected) and Theme.accent or Theme.border))
+    local lit = button.selected or button.hover
+    button:SetBackdropColor(unpack(lit and Theme.bgHover or Theme.bgRaised))
+    button:SetBackdropBorderColor(unpack(lit and Theme.accent or Theme.border))
     button.text:SetTextColor(unpack(button.selected and Theme.accent or Theme.text))
 end
 

@@ -28,6 +28,42 @@ local function reagentsOf(schematic)
     return out
 end
 
+-- Walks a category and its ancestors into `categories`, stopping on missing or
+-- already-recorded IDs.
+local function addCategories(categories, T, id)
+    if not id or id == 0 or categories[id] or not T.GetCategoryInfo then
+        return
+    end
+    local c = T.GetCategoryInfo(id)
+    if c and c.name then
+        categories[id] = { name = c.name, parent = c.parentCategoryID }
+        addCategories(categories, T, c.parentCategoryID)
+    end
+end
+
+local function collectRecipe(T, profession, meta, id)
+    local info = T.GetRecipeInfo(id)
+    if not info or skipped(info) then
+        return
+    end
+    local cat = info.categoryID or 0
+    local schematic = T.GetRecipeSchematic and T.GetRecipeSchematic(id, false)
+    meta[id] = {
+        name = info.name,
+        icon = info.icon,
+        item = schematic and schematic.outputItemID,
+        qtyMin = schematic and schematic.quantityMin,
+        qtyMax = schematic and schematic.quantityMax,
+        prof = profession.id,
+        cat = cat,
+        reagents = reagentsOf(schematic),
+    }
+    if info.learned then
+        profession.recipes[id] = cat
+        addCategories(profession.categories, T, cat)
+    end
+end
+
 -- Pure scan: returns the profession record and recipe metadata, or nil when
 -- the window isn't showing this character's own, ready profession.
 --   profession = { id, name, skill, maxSkill, recipes = { [recipeID] = categoryID },
@@ -54,38 +90,8 @@ function Scanner.Collect(T)
         categories = {},
     }
     local meta = {}
-
-    local function addCategory(id)
-        if not id or id == 0 or profession.categories[id] or not T.GetCategoryInfo then
-            return
-        end
-        local c = T.GetCategoryInfo(id)
-        if c and c.name then
-            profession.categories[id] = { name = c.name, parent = c.parentCategoryID }
-            addCategory(c.parentCategoryID)
-        end
-    end
-
     for _, id in ipairs(T.GetAllRecipeIDs and T.GetAllRecipeIDs() or {}) do
-        local info = T.GetRecipeInfo(id)
-        if info and not skipped(info) then
-            local cat = info.categoryID or 0
-            local schematic = T.GetRecipeSchematic and T.GetRecipeSchematic(id, false)
-            meta[id] = {
-                name = info.name,
-                icon = info.icon,
-                item = schematic and schematic.outputItemID,
-                qtyMin = schematic and schematic.quantityMin,
-                qtyMax = schematic and schematic.quantityMax,
-                prof = profession.id,
-                cat = cat,
-                reagents = reagentsOf(schematic),
-            }
-            if info.learned then
-                profession.recipes[id] = cat
-                addCategory(cat)
-            end
-        end
+        collectRecipe(T, profession, meta, id)
     end
     return profession, meta
 end
@@ -249,6 +255,44 @@ function Scanner.SyncSkills(char, infos, catalog)
     return changed, needsFull
 end
 
+local function quietScanRecipe(p, recipeID, T)
+    if p.recipes[recipeID] then
+        return false
+    end
+    local r = T.GetRecipeInfo(recipeID)
+    if not (r and r.learned) then
+        return false
+    end
+    local cat = r.categoryID or 0
+    p.recipes[recipeID] = cat
+    addCategories(p.categories, T, cat)
+    return true
+end
+
+local function quietScanProfession(char, id, info, entries, T, now)
+    local p = char.professions[id]
+    if not p then
+        p = { id = id, name = info.name, skill = 0, maxSkill = 0, recipes = {}, categories = {} }
+        char.professions[id] = p
+    end
+    local changed = false
+    if p.skill ~= info.skill or p.maxSkill ~= info.maxSkill then
+        p.skill, p.maxSkill = info.skill, info.maxSkill
+        changed = true
+    end
+    local found = false
+    for recipeID in pairs(entries) do
+        if quietScanRecipe(p, recipeID, T) then
+            found = true
+        end
+    end
+    if found then
+        p.scannedAt = now
+        changed = true
+    end
+    return changed
+end
+
 -- Without the profession window: for each profession the character has,
 -- asks the client which catalog recipes are learned (Forever answers
 -- GetRecipeInfo(id).learned with the window closed). Adds what it finds to
@@ -265,39 +309,8 @@ function Scanner.QuietScan(char, infos, T, catalog, now)
     local changed = false
     for id, info in pairs(infos) do
         local entries = catalog[id]
-        if entries then
-            local p = char.professions[id]
-            if not p then
-                p = { id = id, name = info.name, skill = 0, maxSkill = 0, recipes = {}, categories = {} }
-                char.professions[id] = p
-            end
-            if p.skill ~= info.skill or p.maxSkill ~= info.maxSkill then
-                p.skill, p.maxSkill = info.skill, info.maxSkill
-                changed = true
-            end
-            local found = false
-            for recipeID in pairs(entries) do
-                if not p.recipes[recipeID] then
-                    local r = T.GetRecipeInfo(recipeID)
-                    if r and r.learned then
-                        local cat = r.categoryID or 0
-                        p.recipes[recipeID] = cat
-                        found = true
-                        while cat and cat ~= 0 and not p.categories[cat] and T.GetCategoryInfo do
-                            local c = T.GetCategoryInfo(cat)
-                            if not (c and c.name) then
-                                break
-                            end
-                            p.categories[cat] = { name = c.name, parent = c.parentCategoryID }
-                            cat = c.parentCategoryID
-                        end
-                    end
-                end
-            end
-            if found then
-                p.scannedAt = now
-                changed = true
-            end
+        if entries and quietScanProfession(char, id, info, entries, T, now) then
+            changed = true
         end
     end
     return changed
@@ -307,6 +320,32 @@ end
 -- recipe or a skill change); bursts of events run it once.
 -- skillsOnly: skip querying unlearned recipes unless a new profession appeared.
 local quietPending, quietFull = false, false
+
+local function runQuietScan(full)
+    if not ns.char then
+        return
+    end
+    local infos = professionInfos()
+    local changed = Scanner.DropUnlearned(ns.char)
+    local needsFull = full
+    if not full then
+        local skillChanged, newProf = Scanner.SyncSkills(ns.char, infos, ns.RecipeDB)
+        changed = changed or skillChanged
+        needsFull = newProf
+    end
+    if needsFull and Scanner.QuietScan(ns.char, infos, C_TradeSkillUI, ns.RecipeDB, ns.Now()) then
+        changed = true
+    end
+    if not changed then
+        return
+    end
+    if ns.db.settings.debug then
+        ns.Print("updated professions without the profession window")
+    end
+    ns.Refresh()
+    ns.Sync.Announce()
+end
+
 function Scanner.QuietQueue(delay, skillsOnly)
     if not skillsOnly then
         quietFull = true
@@ -318,33 +357,7 @@ function Scanner.QuietQueue(delay, skillsOnly)
     C_Timer.After(delay or 2, function()
         local full = quietFull
         quietPending, quietFull = false, false
-        if not ns.char then
-            return
-        end
-        local infos = professionInfos()
-        local dropped = Scanner.DropUnlearned(ns.char)
-        local changed = dropped
-        if full then
-            if Scanner.QuietScan(ns.char, infos, C_TradeSkillUI, ns.RecipeDB, ns.Now()) then
-                changed = true
-            end
-        else
-            local skillChanged, needsFull = Scanner.SyncSkills(ns.char, infos, ns.RecipeDB)
-            if needsFull then
-                if Scanner.QuietScan(ns.char, infos, C_TradeSkillUI, ns.RecipeDB, ns.Now()) then
-                    changed = true
-                end
-            elseif skillChanged then
-                changed = true
-            end
-        end
-        if changed then
-            if ns.db.settings.debug then
-                ns.Print("updated professions without the profession window")
-            end
-            ns.Refresh()
-            ns.Sync.Announce()
-        end
+        runQuietScan(full)
     end)
 end
 

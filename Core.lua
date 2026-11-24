@@ -1,5 +1,7 @@
 local ADDON, ns = ...
 
+-- Addon lifecycle: SavedVariables init, login/guild/tradeskill event wiring,
+-- and /marketplace (/mkt) slash commands.
 local DEFAULT_SETTINGS = {
     tooltips = true,
 }

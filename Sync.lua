@@ -238,6 +238,32 @@ function Sync.ParseBegin(line)
     return hash, tonumber(stamp), owner ~= "" and owner or nil
 end
 
+local function decodeProfession(pending, rest)
+    local id, skill, maxSkill, name = rest:match("^(%d+):(%d+):(%d+):(.*)$")
+    if not id then
+        return
+    end
+    pending.professions[tonumber(id)] = {
+        id = tonumber(id), name = name, skill = tonumber(skill), maxSkill = tonumber(maxSkill),
+        scannedAt = pending.stamp, recipes = {}, categories = {},
+    }
+end
+
+local function decodeProfessionChunk(pending, kind, rest)
+    local id, list = rest:match("^(%d+):(.*)$")
+    local p = id and pending.professions[tonumber(id)]
+    if not p then
+        return
+    end
+    if kind == "C" then
+        for cat, parent, name in list:gmatch("(%d+)=(%d+)=([^;]*)") do
+            p.categories[tonumber(cat)] = { name = name, parent = tonumber(parent) }
+        end
+    else
+        unpackRecipes(list, p.recipes)
+    end
+end
+
 -- Collects one sender's B…E lines. Feed returns (professions, hash, owner,
 -- stamp) once a complete, matching copy has arrived (owner only for a
 -- relayed copy); nil otherwise.
@@ -252,23 +278,9 @@ function Sync.NewDecoder()
         elseif not pending then
             return nil
         elseif kind == "P" then
-            local id, skill, maxSkill, name = rest:match("^(%d+):(%d+):(%d+):(.*)$")
-            if id then
-                pending.professions[tonumber(id)] = {
-                    id = tonumber(id), name = name, skill = tonumber(skill), maxSkill = tonumber(maxSkill),
-                    scannedAt = pending.stamp, recipes = {}, categories = {},
-                }
-            end
+            decodeProfession(pending, rest)
         elseif kind == "C" or kind == "I" then
-            local id, list = rest:match("^(%d+):(.*)$")
-            local p = id and pending.professions[tonumber(id)]
-            if p and kind == "C" then
-                for cat, parent, name in list:gmatch("(%d+)=(%d+)=([^;]*)") do
-                    p.categories[tonumber(cat)] = { name = name, parent = tonumber(parent) }
-                end
-            elseif p then
-                unpackRecipes(list, p.recipes)
-            end
+            decodeProfessionChunk(pending, kind, rest)
         elseif kind == "E" then
             local done = pending
             pending = nil
@@ -987,12 +999,12 @@ function handlers.L(sender, rest)
     end
     if more == "0" then
         incoming[key] = nil
-        if ready() then
-            for _, owner in ipairs(reconcile(into.list, bucket)) do
-                if r and not r.wanted[owner] then
-                    r.wanted[owner] = into.list[owner].hash
-                    r.pending = r.pending + 1
-                end
+    end
+    if more == "0" and ready() then
+        for _, owner in ipairs(reconcile(into.list, bucket)) do
+            if r and not r.wanted[owner] then
+                r.wanted[owner] = into.list[owner].hash
+                r.pending = r.pending + 1
             end
         end
     end
@@ -1052,6 +1064,28 @@ local function onBegin(sender, line)
     end
 end
 
+local function storeRelayed(data, sender, professions, hash, owner, stamp)
+    if isSelf(owner) then
+        if hash ~= Sync.MyHash() then
+            -- An old (or forged) copy of us is going round: send ours.
+            if stamp >= ownStamp() then
+                ns.char.shareStamp = stamp + 1
+            end
+            scheduleOwn(false)
+        end
+        return false
+    end
+    local known = data[owner]
+    local stale = known and (known.hash == hash or not Sync.Newer({ hash = hash, stamp = stamp }, { hash = known.hash, stamp = entryStamp(known) }))
+    if stale or leftGuild(members(), owner) then
+        return false
+    end
+    -- updated: the owner's last change, the last time we know they were on.
+    data[owner] = { professions = professions, hash = hash, stamp = stamp, updated = stamp, via = sender }
+    debug(string.format("received %s's recipes via %s", owner, sender))
+    return true
+end
+
 local function store(sender, professions, hash, owner, stamp)
     local data = Sync.GuildData()
     if not data or not ns.char then
@@ -1064,25 +1098,8 @@ local function store(sender, professions, hash, owner, stamp)
     if not owner then
         data[sender] = { professions = professions, hash = hash, stamp = stamp, updated = now() }
         debug("received " .. sender .. "'s recipes")
-    else
-        if isSelf(owner) then
-            if hash ~= Sync.MyHash() then
-                -- An old (or forged) copy of us is going round: send ours.
-                if stamp >= ownStamp() then
-                    ns.char.shareStamp = stamp + 1
-                end
-                scheduleOwn(false)
-            end
-            return
-        end
-        local known = data[owner]
-        if (known and (known.hash == hash or not Sync.Newer({ hash = hash, stamp = stamp }, { hash = known.hash, stamp = entryStamp(known) })))
-            or leftGuild(members(), owner) then
-            return
-        end
-        -- updated: the owner's last change, the last time we know they were on.
-        data[owner] = { professions = professions, hash = hash, stamp = stamp, updated = stamp, via = sender }
-        debug(string.format("received %s's recipes via %s", owner, sender))
+    elseif not storeRelayed(data, sender, professions, hash, owner, stamp) then
+        return
     end
     local key = owner or sender
     requested[key] = nil

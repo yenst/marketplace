@@ -13,6 +13,7 @@ ignore:
   - tests
   - tools
   - assets
+  - AGENTS.md
   - README.md
   - CHANGELOG.md
   - dist

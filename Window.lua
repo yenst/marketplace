@@ -169,6 +169,17 @@ local function classColor(class)
     return c and { c.r, c.g, c.b, 1 } or Theme.text
 end
 
+local function rosterLastOnline(index)
+    if not GetGuildRosterLastOnline then
+        return nil
+    end
+    local years, months, days, hours = GetGuildRosterLastOnline(index)
+    if not years then
+        return nil
+    end
+    return (((years * 365 + months * 30 + days) * 24) + hours) * 3600
+end
+
 -- Roster by short name: { online, class, lastOnline (seconds ago) }.
 local function readRoster()
     local roster, size = {}, 0
@@ -179,13 +190,7 @@ local function readRoster()
         local name, _, _, _, _, _, _, _, isOnline, _, classFile = GetGuildRosterInfo(i)
         if name then
             size = size + 1
-            local ago
-            if not isOnline and GetGuildRosterLastOnline then
-                local years, months, days, hours = GetGuildRosterLastOnline(i)
-                if years then
-                    ago = (((years * 365 + months * 30 + days) * 24) + hours) * 3600
-                end
-            end
+            local ago = not isOnline and rosterLastOnline(i) or nil
             roster[Data.ShortName(name)] = { online = isOnline, class = classFile, lastOnline = ago }
         end
     end
@@ -479,6 +484,86 @@ local function buildFilters()
     online:SetPoint("LEFT", frame.member, "RIGHT", 14, 0)
 end
 
+local function onListRowClick(self, button)
+    hideMemberMenu()
+    local item = self.item
+    if not item then
+        return
+    end
+    if button == "RightButton" then
+        if not item.header then
+            Window.ToggleFavorite(item.recipe.id)
+        end
+        return
+    end
+    if item.header then
+        state.collapsed[item.label] = not state.collapsed[item.label] or nil
+        Window.Refresh()
+        return
+    end
+    local link = recipeLink(item.recipe.id)
+    if link and IsModifiedClick and IsModifiedClick("CHATLINK") then
+        insertLink(link)
+        return
+    end
+    if IsModifiedClick and IsModifiedClick("DRESSUP") then
+        local meta = ns.Scanner.Meta(item.recipe.id)
+        if meta and meta.item then
+            modifiedItemClick(meta.item)
+        end
+        return
+    end
+    state.selected, state.crafterOffset = item.recipe.id, 0
+    Window.DrawList()
+    Window.DrawDetail()
+end
+
+local function buildListRow(list, index)
+    local row = CreateFrame("Button", nil, list)
+    row:SetHeight(ROW_HEIGHT)
+    row:SetPoint("TOPLEFT", 3, -3 - (index - 1) * ROW_HEIGHT)
+    row:SetPoint("TOPRIGHT", -12, -3 - (index - 1) * ROW_HEIGHT)
+    row.hover = hoverTexture(row)
+    -- Category headers sit on a shaded band so groups read at a glance.
+    row.band = row:CreateTexture(nil, "BACKGROUND", nil, -1)
+    row.band:SetAllPoints()
+    row.band:SetColorTexture(1, 1, 1, 0.05)
+    row.selectedBg = row:CreateTexture(nil, "BACKGROUND")
+    row.selectedBg:SetAllPoints()
+    row.selectedBg:SetColorTexture(Theme.accent[1], Theme.accent[2], Theme.accent[3], 0.16)
+    row.sign = W.Text(row, 13, Theme.accent)
+    row.sign:SetPoint("LEFT", 7, 0)
+    row.star = row:CreateTexture(nil, "ARTWORK")
+    row.star:SetSize(13, 13)
+    row.star:Hide()
+    row.label = W.Text(row, 12)
+    row.label:SetPoint("LEFT", 22, 0)
+    row.label:SetPoint("RIGHT", -150, 0)
+    row.count = W.Text(row, 11, Theme.muted, "RIGHT")
+    row.count:SetPoint("RIGHT", -8, 0)
+    row.count:SetWidth(110)
+    row.dot = row:CreateTexture(nil, "ARTWORK")
+    row.dot:SetSize(6, 6)
+    row.dot:SetPoint("RIGHT", row.count, "LEFT", -6, 0)
+    row.dot:SetColorTexture(unpack(Theme.online))
+    row:SetScript("OnEnter", function(self)
+        self.hover:Show()
+        local link = self.item and not self.item.header and recipeLink(self.item.recipe.id)
+        if link then
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetHyperlink(link)
+            GameTooltip:Show()
+        end
+    end)
+    row:SetScript("OnLeave", function(self)
+        self.hover:Hide()
+        GameTooltip:Hide()
+    end)
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row:SetScript("OnClick", onListRowClick)
+    return row
+end
+
 local function buildList()
     local list = W.Panel(frame.browse, { 0.04, 0.06, 0.08, 1 })
     list:SetPoint("TOPLEFT", PAD, -LIST_TOP)
@@ -504,90 +589,11 @@ local function buildList()
 
     frame.rows = {}
     for i = 1, ROWS do
-        local row = CreateFrame("Button", nil, list)
-        row:SetHeight(ROW_HEIGHT)
-        row:SetPoint("TOPLEFT", 3, -3 - (i - 1) * ROW_HEIGHT)
-        row:SetPoint("TOPRIGHT", -12, -3 - (i - 1) * ROW_HEIGHT)
-        row.hover = hoverTexture(row)
-        -- Category headers sit on a shaded band so groups read at a glance.
-        row.band = row:CreateTexture(nil, "BACKGROUND", nil, -1)
-        row.band:SetAllPoints()
-        row.band:SetColorTexture(1, 1, 1, 0.05)
-        row.selectedBg = row:CreateTexture(nil, "BACKGROUND")
-        row.selectedBg:SetAllPoints()
-        row.selectedBg:SetColorTexture(Theme.accent[1], Theme.accent[2], Theme.accent[3], 0.16)
-        row.sign = W.Text(row, 13, Theme.accent)
-        row.sign:SetPoint("LEFT", 7, 0)
-        row.star = row:CreateTexture(nil, "ARTWORK")
-        row.star:SetSize(13, 13)
-        row.star:Hide()
-        row.label = W.Text(row, 12)
-        row.label:SetPoint("LEFT", 22, 0)
-        row.label:SetPoint("RIGHT", -150, 0)
-        row.count = W.Text(row, 11, Theme.muted, "RIGHT")
-        row.count:SetPoint("RIGHT", -8, 0)
-        row.count:SetWidth(110)
-        row.dot = row:CreateTexture(nil, "ARTWORK")
-        row.dot:SetSize(6, 6)
-        row.dot:SetPoint("RIGHT", row.count, "LEFT", -6, 0)
-        row.dot:SetColorTexture(unpack(Theme.online))
-        row:SetScript("OnEnter", function(self)
-            self.hover:Show()
-            local link = self.item and not self.item.header and recipeLink(self.item.recipe.id)
-            if link then
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:SetHyperlink(link)
-                GameTooltip:Show()
-            end
-        end)
-        row:SetScript("OnLeave", function(self)
-            self.hover:Hide()
-            GameTooltip:Hide()
-        end)
-        row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-        row:SetScript("OnClick", function(self, button)
-            hideMemberMenu()
-            local item = self.item
-            if not item then
-                return
-            end
-            if button == "RightButton" then
-                if not item.header then
-                    Window.ToggleFavorite(item.recipe.id)
-                end
-                return
-            end
-            if item.header then
-                state.collapsed[item.label] = not state.collapsed[item.label] or nil
-                Window.Refresh()
-                return
-            end
-            local link = recipeLink(item.recipe.id)
-            if link and IsModifiedClick and IsModifiedClick("CHATLINK") then
-                insertLink(link)
-                return
-            end
-            if IsModifiedClick and IsModifiedClick("DRESSUP") then
-                local meta = ns.Scanner.Meta(item.recipe.id)
-                if meta and meta.item then
-                    modifiedItemClick(meta.item)
-                end
-                return
-            end
-            state.selected, state.crafterOffset = item.recipe.id, 0
-            Window.DrawList()
-            Window.DrawDetail()
-        end)
-        frame.rows[i] = row
+        frame.rows[i] = buildListRow(list, i)
     end
 end
 
-local function buildDetail()
-    local left = CreateFrame("Frame", nil, frame.browse)
-    left:SetPoint("TOPLEFT", PAD, -DETAIL_TOP)
-    left:SetSize(420, HEIGHT - DETAIL_TOP - 40)
-    frame.detail = left
-
+local function buildDetailHeader(left)
     local tile = iconTile(left, 40)
     tile:SetPoint("TOPLEFT")
     tile:EnableMouse(true)
@@ -611,6 +617,7 @@ local function buildDetail()
     frame.selName = W.Text(left, 14)
     frame.selName:SetPoint("TOPLEFT", tile, "TOPRIGHT", 10, -3)
     frame.selName:SetPoint("RIGHT", left, "RIGHT", -30, 0)
+
     local fav = CreateFrame("Button", nil, left)
     fav:SetSize(22, 22)
     fav:SetPoint("TOPRIGHT", 0, 0)
@@ -629,12 +636,32 @@ local function buildDetail()
     end)
     fav:SetScript("OnLeave", function() GameTooltip:Hide() end)
     frame.favorite = fav
+
     frame.selSub = W.Text(left, 11, Theme.muted)
     frame.selSub:SetPoint("TOPLEFT", frame.selName, "BOTTOMLEFT", 0, -5)
 
+    -- Track Recipe, as in the profession window: its reagents go to the
+    -- objective tracker.
+    frame.track = W.Toggle(left, "Track recipe", function()
+        local T = C_TradeSkillUI
+        return state.selected and T and T.IsRecipeTracked and T.IsRecipeTracked(state.selected, false) or false
+    end, function(on)
+        local T = C_TradeSkillUI
+        if state.selected and T and T.SetRecipeTracked then
+            T.SetRecipeTracked(state.selected, on, false)
+        end
+    end)
+    frame.track:SetWidth(100)
+    frame.track:SetPoint("TOPRIGHT", 0, -22)
+    frame.selSub:SetPoint("RIGHT", frame.track, "LEFT", -8, 0)
+    return tile
+end
+
+local function buildReagentSlots(left, anchor)
     local label = W.Text(left, 11, Theme.muted)
-    label:SetPoint("TOPLEFT", tile, "BOTTOMLEFT", 0, -10)
+    label:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -10)
     label:SetText("Reagents")
+    frame.reagentLabel = label
 
     frame.reagents = {}
     for i = 1, REAGENT_SLOTS do
@@ -667,25 +694,11 @@ local function buildDetail()
         end)
         frame.reagents[i] = slot
     end
-    frame.reagentLabel = label
+end
 
-    -- Track Recipe, as in the profession window: its reagents go to the
-    -- objective tracker.
-    frame.track = W.Toggle(left, "Track recipe", function()
-        local T = C_TradeSkillUI
-        return state.selected and T and T.IsRecipeTracked and T.IsRecipeTracked(state.selected, false) or false
-    end, function(on)
-        local T = C_TradeSkillUI
-        if state.selected and T and T.SetRecipeTracked then
-            T.SetRecipeTracked(state.selected, on, false)
-        end
-    end)
-    frame.track:SetWidth(100)
-    frame.track:SetPoint("TOPRIGHT", 0, -22)
-    frame.selSub:SetPoint("RIGHT", frame.track, "LEFT", -8, 0)
-
-    -- Auctionator: mats cost, what's missing and the sell price as small
-    -- tiles, plus a shopping list button with Auctionator's logo.
+-- Auctionator: mats cost, what's missing and the sell price as small tiles,
+-- plus a shopping list button with Auctionator's logo.
+local function buildCostTiles(left)
     frame.stats = {}
     for i, key in ipairs({ "mats", "short", "sells" }) do
         local tile = W.Panel(left, { 0.04, 0.06, 0.08, 1 })
@@ -725,18 +738,50 @@ local function buildDetail()
             ns.Print("Auctionator shopping list \"" .. listName .. "\" is ready: find it in the Shopping tab at the auction house.")
         end
     end)
+end
 
-    local divider = frame.browse:CreateTexture(nil, "ARTWORK")
-    divider:SetColorTexture(unpack(Theme.hairline))
-    divider:SetWidth(1)
-    divider:SetPoint("TOPLEFT", left, "TOPRIGHT", 12, 0)
-    divider:SetPoint("BOTTOMLEFT", left, "BOTTOMRIGHT", 12, 0)
+local function buildCrafterRow(right, index)
+    local row = CreateFrame("Frame", nil, right)
+    row:SetHeight(CRAFTER_HEIGHT)
+    row:SetPoint("TOPLEFT", 0, -18 - (index - 1) * CRAFTER_HEIGHT)
+    row:SetPoint("TOPRIGHT", 0, -18 - (index - 1) * CRAFTER_HEIGHT)
+    row.dot = row:CreateTexture(nil, "ARTWORK")
+    row.dot:SetSize(8, 8)
+    row.dot:SetPoint("LEFT", 4, 0)
+    row.class = row:CreateTexture(nil, "ARTWORK")
+    row.class:SetSize(22, 22)
+    row.class:SetPoint("LEFT", 18, 0)
+    row.name = W.Text(row, 12)
+    row.name:SetPoint("TOPLEFT", 46, -2)
+    row.name:SetPoint("RIGHT", -32, 0)
+    row.status = W.Text(row, 11, Theme.muted)
+    row.status:SetPoint("BOTTOMLEFT", 46, 2)
+    row.status:SetPoint("RIGHT", -32, 0)
+    row.whisper = W.IconButton(row, 24, "Interface\\ChatFrame\\UI-ChatIcon-Chat-Up", "W", function(self)
+        return "Whisper " .. (self.target or ""), "Opens a tell with the recipe link in it."
+    end, function(self)
+        whisper(self.target, state.selected and recipeLink(state.selected))
+    end)
+    row.whisper:SetPoint("RIGHT")
+    -- Click the name: only this member's patterns.
+    row.pick = CreateFrame("Button", nil, row)
+    row.pick:SetPoint("TOPLEFT")
+    row.pick:SetPoint("BOTTOMRIGHT", -32, 0)
+    row.pick:SetScript("OnClick", function(self)
+        if self.key then
+            setMember(self.key)
+        end
+    end)
+    row.pick:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("Show only " .. (self.name or "their") .. "'s patterns", 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    row.pick:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    return row
+end
 
-    local right = CreateFrame("Frame", nil, frame.browse)
-    right:SetPoint("TOPLEFT", left, "TOPRIGHT", 26, 0)
-    right:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -PAD, -DETAIL_TOP)
-    right:SetHeight(HEIGHT - DETAIL_TOP - 40)
-    frame.right = right
+local function buildCrafters(right)
     right:EnableMouseWheel(true)
     right:SetScript("OnMouseWheel", function(_, delta)
         local recipe = state.selected and model.recipes[state.selected]
@@ -752,52 +797,17 @@ local function buildDetail()
 
     frame.crafters = {}
     for i = 1, CRAFTER_ROWS do
-        local row = CreateFrame("Frame", nil, right)
-        row:SetHeight(CRAFTER_HEIGHT)
-        row:SetPoint("TOPLEFT", 0, -18 - (i - 1) * CRAFTER_HEIGHT)
-        row:SetPoint("TOPRIGHT", 0, -18 - (i - 1) * CRAFTER_HEIGHT)
-        row.dot = row:CreateTexture(nil, "ARTWORK")
-        row.dot:SetSize(8, 8)
-        row.dot:SetPoint("LEFT", 4, 0)
-        row.class = row:CreateTexture(nil, "ARTWORK")
-        row.class:SetSize(22, 22)
-        row.class:SetPoint("LEFT", 18, 0)
-        row.name = W.Text(row, 12)
-        row.name:SetPoint("TOPLEFT", 46, -2)
-        row.name:SetPoint("RIGHT", -32, 0)
-        row.status = W.Text(row, 11, Theme.muted)
-        row.status:SetPoint("BOTTOMLEFT", 46, 2)
-        row.status:SetPoint("RIGHT", -32, 0)
-        row.whisper = W.IconButton(row, 24, "Interface\\ChatFrame\\UI-ChatIcon-Chat-Up", "W", function(self)
-            return "Whisper " .. (self.target or ""), "Opens a tell with the recipe link in it."
-        end, function(self)
-            whisper(self.target, state.selected and recipeLink(state.selected))
-        end)
-        row.whisper:SetPoint("RIGHT")
-        -- Click the name: only this member's patterns.
-        row.pick = CreateFrame("Button", nil, row)
-        row.pick:SetPoint("TOPLEFT")
-        row.pick:SetPoint("BOTTOMRIGHT", -32, 0)
-        row.pick:SetScript("OnClick", function(self)
-            if self.key then
-                setMember(self.key)
-            end
-        end)
-        row.pick:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:AddLine("Show only " .. (self.name or "their") .. "'s patterns", 1, 1, 1)
-            GameTooltip:Show()
-        end)
-        row.pick:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        frame.crafters[i] = row
+        frame.crafters[i] = buildCrafterRow(right, i)
     end
     frame.nobody = W.Text(right, 12, Theme.muted)
     frame.nobody:SetPoint("TOPLEFT", 4, -24)
     frame.nobody:SetPoint("RIGHT")
     frame.nobody:SetWordWrap(true)
     frame.nobody:SetText("Nobody in your guild knows this recipe yet.")
+end
 
-    -- Where to learn it (from the recipe catalog); hover for the recipe item.
+-- Where to learn it (from the recipe catalog); hover for the recipe item.
+local function buildSourcePanel(right)
     local source = CreateFrame("Frame", nil, right)
     source:SetPoint("TOPLEFT", 0, -SOURCE_TOP)
     source:SetPoint("BOTTOMRIGHT")
@@ -829,6 +839,32 @@ local function buildDetail()
     frame.sourceText:SetJustifyV("TOP")
     frame.sourceText:SetWordWrap(true)
     frame.source = source
+end
+
+local function buildDetail()
+    local left = CreateFrame("Frame", nil, frame.browse)
+    left:SetPoint("TOPLEFT", PAD, -DETAIL_TOP)
+    left:SetSize(420, HEIGHT - DETAIL_TOP - 40)
+    frame.detail = left
+
+    local tile = buildDetailHeader(left)
+    buildReagentSlots(left, tile)
+    buildCostTiles(left)
+
+    local divider = frame.browse:CreateTexture(nil, "ARTWORK")
+    divider:SetColorTexture(unpack(Theme.hairline))
+    divider:SetWidth(1)
+    divider:SetPoint("TOPLEFT", left, "TOPRIGHT", 12, 0)
+    divider:SetPoint("BOTTOMLEFT", left, "BOTTOMRIGHT", 12, 0)
+
+    local right = CreateFrame("Frame", nil, frame.browse)
+    right:SetPoint("TOPLEFT", left, "TOPRIGHT", 26, 0)
+    right:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -PAD, -DETAIL_TOP)
+    right:SetHeight(HEIGHT - DETAIL_TOP - 40)
+    frame.right = right
+
+    buildCrafters(right)
+    buildSourcePanel(right)
 end
 
 local function buildFooter()
@@ -935,6 +971,63 @@ local function drawHeader()
     end
 end
 
+local function drawHeaderRow(row, item)
+    row.band:Show()
+    row.sign:SetText(item.collapsed and "+" or "-")
+    row.star:SetShown(item.favorites)
+    if item.favorites then
+        row.star:ClearAllPoints()
+        row.star:SetPoint("LEFT", 20, 0)
+        setStar(row.star, true)
+    end
+    row.label:SetPoint("LEFT", item.favorites and 38 or 22, 0)
+    row.label:SetText(item.label)
+    row.label:SetTextColor(unpack(Theme.text))
+    row.label:SetAlpha(1)
+    row.count:SetText(ns.Plural(item.count, "recipe"))
+    row.dot:Hide()
+    row.selectedBg:Hide()
+end
+
+local function drawRecipeRow(row, item)
+    row.band:Hide()
+    local meta = ns.Scanner.Meta(item.recipe.id) or {}
+    local quality = meta.item and itemQuality(meta.item)
+    row.sign:SetText("")
+    row.star:Hide()
+    row.label:SetPoint("LEFT", 34, 0)
+    row.label:SetText(Theme.QualityHex(quality or 1) .. item.name .. "|r")
+    row.label:SetAlpha(item.total == 0 and 0.6 or 1)
+    local text = Data.CrafterText(item)
+    row.count:SetText(text)
+    row.dot:SetShown(item.online > 0)
+    row.dot:ClearAllPoints()
+    if text == "" then
+        row.dot:SetPoint("RIGHT", -10, 0)
+    else
+        row.dot:SetPoint("RIGHT", row.count, "LEFT", -6, 0)
+    end
+    row.selectedBg:SetShown(item.recipe.id == state.selected)
+end
+
+local function emptyListMessage()
+    local count = model.count or 0
+    if next(model.recipes) == nil then
+        return "Nothing here yet. Open your profession windows once to scan them; guildmates who run Marketplace show up as they log in."
+    end
+    if count > 0 then
+        return ""
+    end
+    if state.prof ~= "all" and (state.query or "") == "" and not state.onlineOnly then
+        local p = model.tabs and model.tabs[state.prof]
+        return "Nobody in your guild has shared " .. (p and p.name or "this profession") .. " yet."
+    end
+    if state.member then
+        return (state.memberName or state.member) .. " has no patterns here."
+    end
+    return "No recipe matches."
+end
+
 function Window.DrawList()
     if not frame then
         return
@@ -946,64 +1039,99 @@ function Window.DrawList()
         row.item = item
         row:SetShown(item ~= nil)
         if item and item.header then
-            row.band:Show()
-            row.sign:SetText(item.collapsed and "+" or "-")
-            row.star:SetShown(item.favorites)
-            if item.favorites then
-                row.star:ClearAllPoints()
-                row.star:SetPoint("LEFT", 20, 0)
-                setStar(row.star, true)
-            end
-            row.label:SetPoint("LEFT", item.favorites and 38 or 22, 0)
-            row.label:SetText(item.label)
-            row.label:SetTextColor(unpack(Theme.text))
-            row.label:SetAlpha(1)
-            row.count:SetText(ns.Plural(item.count, "recipe"))
-            row.dot:Hide()
-            row.selectedBg:Hide()
+            drawHeaderRow(row, item)
         elseif item then
-            row.band:Hide()
-            local meta = ns.Scanner.Meta(item.recipe.id) or {}
-            local quality = meta.item and itemQuality(meta.item)
-            row.sign:SetText("")
-            row.star:Hide()
-            row.label:SetPoint("LEFT", 34, 0)
-            row.label:SetText(Theme.QualityHex(quality or 1) .. item.name .. "|r")
-            row.label:SetAlpha(item.total == 0 and 0.6 or 1)
-            local text = Data.CrafterText(item)
-            row.count:SetText(text)
-            row.dot:SetShown(item.online > 0)
-            row.dot:ClearAllPoints()
-            if text == "" then
-                row.dot:SetPoint("RIGHT", -10, 0)
-            else
-                row.dot:SetPoint("RIGHT", row.count, "LEFT", -6, 0)
-            end
-            row.selectedBg:SetShown(item.recipe.id == state.selected)
+            drawRecipeRow(row, item)
         end
     end
-    local count = model.count or 0
     if frame.listScroll then
         frame.listScroll:Update(state.offset, ROWS, #items)
     end
-    if next(model.recipes) == nil then
-        frame.empty:SetText("Nothing here yet. Open your profession windows once to scan them; guildmates who run Marketplace show up as they log in.")
-    elseif count == 0 and state.prof ~= "all" and (state.query or "") == "" and not state.onlineOnly then
-        local p = model.tabs and model.tabs[state.prof]
-        frame.empty:SetText("Nobody in your guild has shared " .. (p and p.name or "this profession") .. " yet.")
-    elseif count == 0 and state.member then
-        frame.empty:SetText((state.memberName or state.member) .. " has no patterns here.")
-    elseif count == 0 then
-        frame.empty:SetText("No recipe matches.")
-    else
-        frame.empty:SetText("")
-    end
+    frame.empty:SetText(emptyListMessage())
 end
 
 local function setStat(tile, label, value, title, text)
     tile.label:SetText(label)
     tile.value:SetText(value)
     tile.tipTitle, tile.tipText = title, text
+end
+
+local function unpricedNote(count, noun)
+    if count <= 0 then
+        return nil
+    end
+    local verb = count == 1 and "is" or "are"
+    return string.format("%s without an auction price %s left out.", ns.Plural(count, noun), verb)
+end
+
+local function drawMatsStat(reagents, cost, muted)
+    local value = muted .. "No price|r"
+    if #reagents > 0 and cost.total > 0 then
+        local suffix = cost.unknown > 0 and (muted .. " +?|r") or ""
+        value = ns.AH.Money(cost.total) .. suffix
+    end
+    local tip = unpricedNote(cost.unknown, "reagent") or "From Auctionator's last scan."
+    setStat(frame.stats.mats, "Mats cost", value, "What the reagents cost", tip)
+end
+
+local function drawShortStat(cost, muted)
+    if #cost.missing == 0 then
+        setStat(frame.stats.short, "You're short", Theme.Hex(Theme.online) .. "Nothing|r", "You have every reagent", "Counts your bags and bank.")
+        return
+    end
+    local value
+    if cost.missingTotal > 0 then
+        local suffix = cost.missingUnknown > 0 and (muted .. " +?|r") or ""
+        value = Theme.Hex(Theme.bad) .. ns.AH.Money(cost.missingTotal) .. "|r" .. suffix
+    else
+        value = Theme.Hex(Theme.bad) .. ns.Plural(#cost.missing, "reagent") .. "|r"
+    end
+    local tip = "Counts your bags and bank. The button next to it makes an Auctionator shopping list of it."
+    local missingNote = unpricedNote(cost.missingUnknown, "missing reagent")
+    if missingNote then
+        tip = tip .. "\n" .. missingNote
+    end
+    setStat(frame.stats.short, "You're short", value, "What you still need to buy", tip)
+end
+
+local function formatSeenAge(age)
+    if not age then
+        return "No auction price for it yet."
+    end
+    if age == 0 then
+        return "Seen at the auction house today."
+    end
+    return string.format("Last seen at the auction house %s ago.", ns.Plural(age, "day"))
+end
+
+local function formatSellsLabel(base, age)
+    if not age then
+        return base
+    end
+    if age == 0 then
+        return base .. " · today"
+    end
+    return string.format("%s · %dd ago", base, age)
+end
+
+local function drawSellStat(recipe, meta, cost, muted)
+    local unitSell = meta.item and ns.AH.AuctionPrice(meta.item)
+    local yield, yieldLabel = ns.AH.CraftYield(recipe and recipe.source and recipe.source.n, meta)
+    local sell = unitSell and math.floor(unitSell * yield + 0.5) or nil
+    local age = meta.item and ns.AH.Age(meta.item)
+
+    local tipParts = { formatSeenAge(age) }
+    if unitSell and yieldLabel then
+        tipParts[#tipParts + 1] = string.format("%s each (%s per craft).", ns.AH.Money(unitSell), yieldLabel)
+    end
+    if sell and cost.total > 0 and cost.unknown == 0 then
+        local diff = sell - cost.total
+        local prefix = diff >= 0 and "Profit over the mats: " or "Loss against the mats: "
+        tipParts[#tipParts + 1] = prefix .. ns.AH.Money(math.abs(diff))
+    end
+    local sellsBase = yieldLabel and ("Sells (" .. yieldLabel .. ")") or "Sells for"
+    local value = sell and ns.AH.Money(sell) or (muted .. "No price|r")
+    setStat(frame.stats.sells, formatSellsLabel(sellsBase, age), value, "Auction price of the crafted item", table.concat(tipParts, "\n"))
 end
 
 local function drawCosts(recipe, meta, reagents, cost)
@@ -1025,45 +1153,9 @@ local function drawCosts(recipe, meta, reagents, cost)
     frame.shop:SetPoint("LEFT", frame.stats.sells, "RIGHT", 6, 0)
 
     local muted = Theme.Hex(Theme.muted)
-    local unpriced = cost.unknown > 0 and string.format("%d reagent%s without an auction price %s left out.", cost.unknown, cost.unknown == 1 and "" or "s", cost.unknown == 1 and "is" or "are") or nil
-    setStat(frame.stats.mats, "Mats cost", (#reagents > 0 and cost.total > 0) and (ns.AH.Money(cost.total) .. (cost.unknown > 0 and (muted .. " +?|r") or "")) or (muted .. "No price|r"),
-        "What the reagents cost", unpriced or "From Auctionator's last scan.")
-
-    if #cost.missing == 0 then
-        setStat(frame.stats.short, "You're short", Theme.Hex(Theme.online) .. "Nothing|r", "You have every reagent", "Counts your bags and bank.")
-    else
-        local shortVal
-        if cost.missingTotal > 0 then
-            shortVal = Theme.Hex(Theme.bad) .. ns.AH.Money(cost.missingTotal) .. "|r" .. (cost.missingUnknown > 0 and (muted .. " +?|r") or "")
-        else
-            shortVal = Theme.Hex(Theme.bad) .. ns.Plural(#cost.missing, "reagent") .. "|r"
-        end
-        local shortTip = "Counts your bags and bank. The button next to it makes an Auctionator shopping list of it."
-        if cost.missingUnknown > 0 then
-            shortTip = shortTip .. "\n" .. string.format("%d missing reagent%s without an auction price %s left out.",
-                cost.missingUnknown, cost.missingUnknown == 1 and "" or "s", cost.missingUnknown == 1 and "is" or "are")
-        end
-        setStat(frame.stats.short, "You're short", shortVal, "What you still need to buy", shortTip)
-    end
-
-    local unitSell = meta.item and ns.AH.AuctionPrice(meta.item)
-    local yield, yieldLabel = ns.AH.CraftYield(recipe and recipe.source and recipe.source.n, meta)
-    local sell = unitSell and math.floor(unitSell * yield + 0.5) or nil
-    local age = meta.item and ns.AH.Age(meta.item)
-    local profit
-    if sell and cost.total > 0 and cost.unknown == 0 then
-        local diff = sell - cost.total
-        profit = (diff >= 0 and "Profit over the mats: " or "Loss against the mats: ") .. ns.AH.Money(math.abs(diff))
-    end
-    local seen = age and (age == 0 and "Seen at the auction house today." or string.format("Last seen at the auction house %d day%s ago.", age, age == 1 and "" or "s")) or "No auction price for it yet."
-    local yieldNote = (unitSell and yieldLabel) and string.format("%s each (%s per craft).", ns.AH.Money(unitSell), yieldLabel) or nil
-    local tipParts = { seen }
-    if yieldNote then tipParts[#tipParts + 1] = yieldNote end
-    if profit then tipParts[#tipParts + 1] = profit end
-    local sellsBase = yieldLabel and ("Sells (" .. yieldLabel .. ")") or "Sells for"
-    setStat(frame.stats.sells, age and (age == 0 and (sellsBase .. " · today") or string.format("%s · %dd ago", sellsBase, age)) or sellsBase,
-        sell and ns.AH.Money(sell) or (muted .. "No price|r"),
-        "Auction price of the crafted item", table.concat(tipParts, "\n"))
+    drawMatsStat(reagents, cost, muted)
+    drawShortStat(cost, muted)
+    drawSellStat(recipe, meta, cost, muted)
 end
 
 local function drawReagents(recipe, meta)
@@ -1150,6 +1242,32 @@ local function drawSource(recipe)
     frame.sourceText:SetText(table.concat(lines, "\n"))
 end
 
+local function drawCrafterRow(row, c, profID)
+    local onlineState = Data.IsOnline(c.state)
+    row.dot:SetColorTexture(unpack(onlineState and Theme.online or Theme.offline))
+    row.dot:SetAlpha(c.state == "noaddon" and 0.45 or 1)
+    -- "Billy Joel (215)": their level in this recipe's profession.
+    local p = c.professions and c.professions[profID]
+    local skillSuffix = p and p.skill and p.skill > 0 and (Theme.Hex(Theme.muted) .. " (" .. p.skill .. ")|r") or ""
+    row.name:SetText(c.name .. skillSuffix)
+    row.name:SetTextColor(unpack(onlineState and classColor(c.class) or Theme.muted))
+    setClassIcon(row.class, c.class)
+    row.class:SetDesaturated(not onlineState)
+    row.class:SetAlpha(onlineState and 1 or 0.6)
+    local status = Data.StatusText(c, ns.Now())
+    row.status:SetText(status)
+    row.name:ClearAllPoints()
+    row.name:SetPoint("RIGHT", -32, 0)
+    if status == "" then
+        row.name:SetPoint("LEFT", 46, 0) -- online: the dot says it
+    else
+        row.name:SetPoint("TOPLEFT", 46, -2)
+    end
+    row.whisper.target = c.name
+    row.pick.key, row.pick.name = c.key, c.name
+    row.whisper:SetShown(c.state == "addon" or c.state == "noaddon")
+end
+
 function Window.DrawDetail()
     if not frame then
         return
@@ -1183,28 +1301,7 @@ function Window.DrawDetail()
         local c = list[state.crafterOffset + i]
         row:SetShown(c ~= nil)
         if c then
-            local onlineState = Data.IsOnline(c.state)
-            row.dot:SetColorTexture(unpack(onlineState and Theme.online or Theme.offline))
-            row.dot:SetAlpha(c.state == "noaddon" and 0.45 or 1)
-            -- "Billy Joel (215)": their level in this recipe's profession.
-            local p = c.professions and c.professions[recipe.prof]
-            row.name:SetText(c.name .. (p and p.skill and p.skill > 0 and (Theme.Hex(Theme.muted) .. " (" .. p.skill .. ")|r") or ""))
-            row.name:SetTextColor(unpack(onlineState and classColor(c.class) or Theme.muted))
-            setClassIcon(row.class, c.class)
-            row.class:SetDesaturated(not onlineState)
-            row.class:SetAlpha(onlineState and 1 or 0.6)
-            local status = Data.StatusText(c, ns.Now())
-            row.status:SetText(status)
-            row.name:ClearAllPoints()
-            row.name:SetPoint("RIGHT", -32, 0)
-            if status == "" then
-                row.name:SetPoint("LEFT", 46, 0) -- online: the dot says it
-            else
-                row.name:SetPoint("TOPLEFT", 46, -2)
-            end
-            row.whisper.target = c.name
-            row.pick.key, row.pick.name = c.key, c.name
-            row.whisper:SetShown(c.state == "addon" or c.state == "noaddon")
+            drawCrafterRow(row, c, recipe.prof)
         end
     end
     frame.crafterMore:SetText(#list > CRAFTER_ROWS and string.format("%d of %d  (scroll)", math.min(#list, state.crafterOffset + CRAFTER_ROWS), #list) or "")
@@ -1283,6 +1380,19 @@ function Window.DrawSync()
 end
 ns.Sync.OnRefresh = Window.DrawSync
 
+local function ensureSelection()
+    if state.selected and model.recipes[state.selected] then
+        return
+    end
+    state.selected = nil
+    for _, item in ipairs(model.items) do
+        if not item.header then
+            state.selected = item.recipe.id
+            return
+        end
+    end
+end
+
 function Window.Refresh()
     if not frame or not frame:IsShown() then
         return
@@ -1298,15 +1408,7 @@ function Window.Refresh()
     end
     frame.member:SetLabel(state.memberName or (state.member or "All members"))
     model.items, model.count = Data.List(model.recipes, state, function(id) return ns.Scanner.Meta(id) end, itemName)
-    if not state.selected or not model.recipes[state.selected] then
-        state.selected = nil
-        for _, item in ipairs(model.items) do
-            if not item.header then
-                state.selected = item.recipe.id
-                break
-            end
-        end
-    end
+    ensureSelection()
     drawHeader()
     Window.DrawList()
     Window.DrawDetail()
@@ -1337,15 +1439,7 @@ function Window.ItemDataArrived()
         end
         if (state.query or "") ~= "" then
             model.items, model.count = Data.List(model.recipes, state, function(id) return ns.Scanner.Meta(id) end, itemName)
-            if not state.selected or not model.recipes[state.selected] then
-                state.selected = nil
-                for _, item in ipairs(model.items) do
-                    if not item.header then
-                        state.selected = item.recipe.id
-                        break
-                    end
-                end
-            end
+            ensureSelection()
         end
         Window.DrawList()
         Window.DrawDetail()

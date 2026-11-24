@@ -6,19 +6,25 @@ local _, ns = ...
 local TAB_KEYS = { "ChatTab", "RosterTab", "GuildBenefitsTab", "GuildInfoTab" }
 local tab
 
+local function isSideTab(child, right)
+    if child == tab or not child:IsShown() or not right then
+        return false
+    end
+    local left, bottom = child:GetLeft(), child:GetBottom()
+    local width = child:GetWidth() or 0
+    return left and bottom and left >= right - 8 and width > 0 and width < 80
+end
+
 -- The lowest tab hanging off the window's right edge: Blizzard's (some are
 -- shown or hidden only after the window opens) or another addon's.
 local function lowestTab(frame)
     local right = frame:GetRight()
     local best, bestBottom
     for _, child in ipairs({ frame:GetChildren() }) do
-        if child ~= tab and child:IsShown() and right then
-            local left, bottom = child:GetLeft(), child:GetBottom()
-            local width = child:GetWidth() or 0
-            if left and bottom and left >= right - 8 and width > 0 and width < 80 then
-                if not bestBottom or bottom < bestBottom then
-                    best, bestBottom = child, bottom
-                end
+        if isSideTab(child, right) then
+            local bottom = child:GetBottom()
+            if not bestBottom or bottom < bestBottom then
+                best, bestBottom = child, bottom
             end
         end
     end

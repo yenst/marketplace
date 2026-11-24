@@ -21,6 +21,16 @@ local function online(state)
 end
 Data.IsOnline = online
 
+local function ownState(c, rosterEntry)
+    if c.current then
+        return "you"
+    end
+    if rosterEntry and rosterEntry.online then
+        return "noaddon"
+    end
+    return "offline"
+end
+
 -- ctx = {
 --   own = { { name, class, professions, current = bool }, ... }   your characters in this guild
 --   guildData = { [sender] = { professions, updated } }            synced guildmates
@@ -42,7 +52,7 @@ function Data.Crafters(ctx)
         local r = (ctx.roster or {})[short]
         list[#list + 1] = {
             key = short, name = short, class = c.class, mine = true, professions = c.professions or {},
-            state = c.current and "you" or (r and r.online and "noaddon" or "offline"),
+            state = ownState(c, r),
             lastOnline = r and r.lastOnline,
         }
         taken[short] = true
@@ -74,6 +84,41 @@ function Data.Crafters(ctx)
     return list
 end
 
+local function indexRecipe(recipes, profID, profName, categories, recipeID, cat, crafter)
+    local r = recipes[recipeID]
+    local c = categories and categories[cat]
+    if not r then
+        r = { id = recipeID, prof = profID, profName = profName, cat = cat, catName = c and c.name or "Other", crafters = {} }
+        recipes[recipeID] = r
+    elseif cat and cat ~= 0 and (r.cat == 0 or r.catName == "Other") then
+        if c and c.name then
+            r.cat, r.catName = cat, c.name
+        elseif r.cat == 0 then
+            r.cat = cat
+        end
+    end
+    r.crafters[#r.crafters + 1] = crafter
+end
+
+local function mergeCatalogProfession(recipes, profID, profName, entries)
+    for recipeID, entry in pairs(entries) do
+        local r = recipes[recipeID]
+        if not r then
+            r = { id = recipeID, prof = profID, profName = profName, cat = 0, catName = "Other", crafters = {} }
+            recipes[recipeID] = r
+        end
+        r.source, r.skill = entry, entry.s
+    end
+end
+
+local function compareCrafters(a, b)
+    local oa, ob = Data.STATE_ORDER[a.state], Data.STATE_ORDER[b.state]
+    if oa ~= ob then
+        return oa < ob
+    end
+    return a.name < b.name
+end
+
 -- recipes = { [recipeID] = { prof, profName, cat, catName, crafters = {...},
 --                             source (catalog entry or nil), skill } }
 -- professions = { [profID] = { id, name, crafters = { [key] = crafter } } }
@@ -91,43 +136,19 @@ function Data.Index(crafters, catalog, names)
             end
             prof.crafters[crafter.key] = crafter
             for recipeID, cat in pairs(p.recipes or {}) do
-                local r = recipes[recipeID]
-                local c = p.categories and p.categories[cat]
-                if not r then
-                    r = { id = recipeID, prof = profID, profName = prof.name, cat = cat, catName = c and c.name or "Other", crafters = {} }
-                    recipes[recipeID] = r
-                elseif cat and cat ~= 0 and (r.cat == 0 or r.catName == "Other") then
-                    if c and c.name then
-                        r.cat, r.catName = cat, c.name
-                    elseif r.cat == 0 then
-                        r.cat = cat
-                    end
-                end
-                r.crafters[#r.crafters + 1] = crafter
+                indexRecipe(recipes, profID, prof.name, p.categories, recipeID, cat, crafter)
             end
         end
     end
     for profID, entries in pairs(catalog or {}) do
         if not Data.GATHERING[profID] then
-            local profName = (professions[profID] and professions[profID].name) or (names and names[profID]) or ("Profession " .. profID)
-            for recipeID, entry in pairs(entries) do
-                local r = recipes[recipeID]
-                if not r then
-                    r = { id = recipeID, prof = profID, profName = profName, cat = 0, catName = "Other", crafters = {} }
-                    recipes[recipeID] = r
-                end
-                r.source, r.skill = entry, entry.s
-            end
+            local prof = professions[profID]
+            local profName = (prof and prof.name) or (names and names[profID]) or ("Profession " .. profID)
+            mergeCatalogProfession(recipes, profID, profName, entries)
         end
     end
     for _, r in pairs(recipes) do
-        table.sort(r.crafters, function(a, b)
-            local oa, ob = Data.STATE_ORDER[a.state], Data.STATE_ORDER[b.state]
-            if oa ~= ob then
-                return oa < ob
-            end
-            return a.name < b.name
-        end)
+        table.sort(r.crafters, compareCrafters)
     end
     return recipes, professions
 end
@@ -192,6 +213,115 @@ end
 Data.FAVORITES = "Favorites"
 Data.NOBODY = "Not in your guild"
 
+-- Group sort sentinels: Favorites first, uncategorised recipes after real
+-- category IDs, and "Not in your guild" last in both profession and All views.
+local SORT_FAVORITES_ALL = ""
+local SORT_FAVORITES_PROF = -1
+local SORT_OTHER_CAT = 2 ^ 52
+local SORT_NOBODY_PROF = 2 ^ 53
+local SORT_NOBODY_ALL = "\255"
+
+local function countOnline(crafters)
+    local n = 0
+    for _, c in ipairs(crafters) do
+        if online(c.state) then
+            n = n + 1
+        end
+    end
+    return n
+end
+
+local function groupKey(profFilter, favorite, nobody, recipe)
+    if favorite then
+        return Data.FAVORITES
+    end
+    if nobody then
+        return Data.NOBODY
+    end
+    if profFilter == "all" then
+        return recipe.profName
+    end
+    return recipe.catName
+end
+
+-- The game numbers a profession's categories in the order its window shows
+-- them; uncategorised recipes go last. Favourites come first in either view.
+local function groupSortKey(profFilter, favorite, nobody, recipe)
+    local isAll = profFilter == "all"
+    if favorite then
+        return isAll and SORT_FAVORITES_ALL or SORT_FAVORITES_PROF
+    end
+    if nobody then
+        return isAll and SORT_NOBODY_ALL or SORT_NOBODY_PROF
+    end
+    if isAll then
+        return recipe.profName
+    end
+    return recipe.cat == 0 and SORT_OTHER_CAT or recipe.cat
+end
+
+local function ensureGroup(acc, key, sortValue)
+    if not acc.groups[key] then
+        acc.groups[key] = {}
+        acc.order[#acc.order + 1] = key
+        acc.sortKey[key] = sortValue
+    end
+    return acc.groups[key]
+end
+
+local function collectRecipe(id, r, filter, query, metaOf, itemName, acc)
+    -- Cheap checks first: the catalog has ~2000 recipes.
+    if filter.prof ~= "all" and filter.prof ~= r.prof then
+        return
+    end
+    local nobody = #r.crafters == 0
+    if nobody and filter.prof == "all" and query == "" then
+        return
+    end
+    if filter.member and not Data.Knows(r, filter.member) then
+        return
+    end
+    local on = countOnline(r.crafters)
+    if filter.onlineOnly and on == 0 then
+        return
+    end
+    local favorite = filter.favorites and filter.favorites[id] or false
+    local collapsedNobody = not favorite and nobody and query == "" and filter.collapsed and filter.collapsed[Data.NOBODY]
+    if collapsedNobody then
+        ensureGroup(acc, Data.NOBODY, groupSortKey(filter.prof, false, true, r))
+        acc.collapsedCounts[Data.NOBODY] = (acc.collapsedCounts[Data.NOBODY] or 0) + 1
+        acc.count = acc.count + 1
+        return
+    end
+    local meta = metaOf(id) or {}
+    if not matches(r, meta, query, itemName) then
+        return
+    end
+    local key = groupKey(filter.prof, favorite, nobody, r)
+    local list = ensureGroup(acc, key, groupSortKey(filter.prof, favorite, nobody, r))
+    list[#list + 1] = {
+        recipe = r,
+        name = meta.name or ("Recipe " .. id),
+        online = on,
+        total = #r.crafters,
+        favorite = favorite,
+        skill = r.skill,
+    }
+    acc.count = acc.count + 1
+end
+
+local function compareByName(a, b)
+    return a.name < b.name
+end
+
+local function compareBySkillThenName(a, b)
+    local sa, sb = a.skill or 0, b.skill or 0
+    if sa ~= sb then
+        return sa < sb
+    end
+    return a.name < b.name
+end
+
 -- The recipe list the window draws: headers and rows. Favourite recipes are
 -- grouped under a "Favorites" header at the top instead of their category;
 -- recipes nobody in the guild has go under "Not in your guild" at the
@@ -205,84 +335,35 @@ Data.NOBODY = "Not in your guild"
 -- and the number of matching recipes.
 function Data.List(recipes, filter, metaOf, itemName)
     local query = (filter.query or ""):match("^%s*(.-)%s*$"):lower()
-    local groups, order, sortKey, collapsedCounts = {}, {}, {}, {}
-    local count = 0
+    local acc = { groups = {}, order = {}, sortKey = {}, collapsedCounts = {}, count = 0 }
     for id, r in pairs(recipes) do
-        local nobody = #r.crafters == 0
-        -- Cheap checks first: the catalog has ~2000 recipes.
-        if (filter.prof == "all" or filter.prof == r.prof) and not (nobody and filter.prof == "all" and query == "")
-            and (not filter.member or Data.Knows(r, filter.member)) then
-            local on = 0
-            for _, c in ipairs(r.crafters) do
-                if online(c.state) then
-                    on = on + 1
-                end
-            end
-            if not filter.onlineOnly or on > 0 then
-                local favorite = filter.favorites and filter.favorites[id] or false
-                if not favorite and nobody and query == "" and filter.collapsed and filter.collapsed[Data.NOBODY] then
-                    if not groups[Data.NOBODY] then
-                        groups[Data.NOBODY] = {}
-                        order[#order + 1] = Data.NOBODY
-                        sortKey[Data.NOBODY] = filter.prof == "all" and "\255" or 2 ^ 53
-                    end
-                    collapsedCounts[Data.NOBODY] = (collapsedCounts[Data.NOBODY] or 0) + 1
-                    count = count + 1
-                else
-                    local meta = metaOf(id) or {}
-                    if matches(r, meta, query, itemName) then
-                        local key = favorite and Data.FAVORITES or (nobody and Data.NOBODY)
-                            or (filter.prof == "all" and r.profName or r.catName)
-                        if not groups[key] then
-                            groups[key] = {}
-                            order[#order + 1] = key
-                            -- The game numbers a profession's categories in the order
-                            -- its window shows them; uncategorised recipes go last.
-                            -- Favourites come first in either view.
-                            if favorite then
-                                sortKey[key] = filter.prof == "all" and "" or -1
-                            elseif nobody then
-                                sortKey[key] = filter.prof == "all" and "\255" or 2 ^ 53
-                            else
-                                sortKey[key] = filter.prof == "all" and r.profName or (r.cat == 0 and 2 ^ 52 or r.cat)
-                            end
-                        end
-                        local list = groups[key]
-                        list[#list + 1] = { recipe = r, name = meta.name or ("Recipe " .. id), online = on, total = #r.crafters, favorite = favorite, skill = r.skill }
-                        count = count + 1
-                    end
-                end
-            end
-        end
+        collectRecipe(id, r, filter, query, metaOf, itemName, acc)
     end
-    table.sort(order, function(a, b)
-        if sortKey[a] == sortKey[b] then
+    table.sort(acc.order, function(a, b)
+        if acc.sortKey[a] == acc.sortKey[b] then
             return a < b
         end
-        return sortKey[a] < sortKey[b]
+        return acc.sortKey[a] < acc.sortKey[b]
     end)
     local items = {}
-    for _, key in ipairs(order) do
-        local rows = groups[key]
+    for _, key in ipairs(acc.order) do
+        local rows = acc.groups[key]
         local collapsed = filter.collapsed and filter.collapsed[key] or false
-        items[#items + 1] = { header = true, label = key, count = collapsedCounts[key] or #rows, collapsed = collapsed, favorites = key == Data.FAVORITES }
+        items[#items + 1] = {
+            header = true,
+            label = key,
+            count = acc.collapsedCounts[key] or #rows,
+            collapsed = collapsed,
+            favorites = key == Data.FAVORITES,
+        }
         if not collapsed then
-            if key == Data.NOBODY then
-                table.sort(rows, function(a, b)
-                    if (a.skill or 0) ~= (b.skill or 0) then
-                        return (a.skill or 0) < (b.skill or 0)
-                    end
-                    return a.name < b.name
-                end)
-            else
-                table.sort(rows, function(a, b) return a.name < b.name end)
-            end
+            table.sort(rows, key == Data.NOBODY and compareBySkillThenName or compareByName)
             for _, row in ipairs(rows) do
                 items[#items + 1] = row
             end
         end
     end
-    return items, count
+    return items, acc.count
 end
 
 -- Whether the member (crafter key) can craft a recipe.
@@ -310,6 +391,18 @@ function Data.Coverage(recipes, prof, member)
     return known, total
 end
 
+local function addRecipeMembers(byKey, recipe, prof)
+    for _, c in ipairs(recipe.crafters) do
+        local m = byKey[c.key]
+        if not m then
+            local p = prof ~= "all" and c.professions and c.professions[prof]
+            m = { key = c.key, name = c.name, class = c.class, state = c.state, count = 0, skill = p and p.skill }
+            byKey[c.key] = m
+        end
+        m.count = m.count + 1
+    end
+end
+
 -- Members for the member filter, by name: those with any patterns in the
 -- profession (or any at all). { { key, name, class, state, count, skill } }
 -- (skill: their level in that profession; nil for "all")
@@ -317,15 +410,7 @@ function Data.Members(recipes, prof)
     local byKey = {}
     for _, r in pairs(recipes) do
         if prof == "all" or r.prof == prof then
-            for _, c in ipairs(r.crafters) do
-                local m = byKey[c.key]
-                if not m then
-                    local p = prof ~= "all" and c.professions and c.professions[prof]
-                    m = { key = c.key, name = c.name, class = c.class, state = c.state, count = 0, skill = p and p.skill }
-                    byKey[c.key] = m
-                end
-                m.count = m.count + 1
-            end
+            addRecipeMembers(byKey, r, prof)
         end
     end
     local list = {}
@@ -405,6 +490,34 @@ local function zones(locations, faction, areaIndex, lookup)
     return out
 end
 
+local function vendorSourceText(entry, side, lookup)
+    local where = zones(entry.v, side, 1, lookup)
+    local text
+    if #where > 0 then
+        text = "Sold in " .. table.concat(where, ", ")
+    elseif entry.v then
+        text = "Sold by the other faction"
+    else
+        text = "Sold by a vendor"
+    end
+    if entry.mf then
+        text = text .. " · " .. lookup.favor(entry.mf)
+    end
+    return text
+end
+
+local function questSourceText(entry, side, lookup)
+    local parts = {}
+    for _, quest in ipairs(entry.q or {}) do
+        if not quest[3] or quest[3] == side then
+            local title = lookup.quest(quest[1]) or "A quest"
+            local zone = quest[2] and quest[2] > 0 and lookup.zone(quest[2])
+            parts[#parts + 1] = zone and zone ~= "" and (title .. " in " .. zone) or title
+        end
+    end
+    return #parts > 0 and table.concat(parts, "; ") or "A quest for the other faction"
+end
+
 -- Lines saying where a recipe is learned, from its catalog entry.
 --   faction = "Alliance" | "Horde"
 --   lookup = { zone(areaID), quest(questID), factionName(id), standing(n),
@@ -423,40 +536,13 @@ function Data.Sources(entry, faction, lookup)
         add("Faction", (entry.side == "A" and "Alliance" or "Horde") .. " only")
     end
     local src = entry.src or ""
-    if src:find("a", 1, true) then
-        add("Known", "Every crafter starts with it")
-    end
-    if src:find("t", 1, true) then
-        add("Trainer", entry.cost and lookup.money(entry.cost) or "")
-    end
-    if src:find("v", 1, true) then
-        local where = zones(entry.v, side, 1, lookup)
-        local text = #where > 0 and ("Sold in " .. table.concat(where, ", ")) or (entry.v and "Sold by the other faction" or "Sold by a vendor")
-        if entry.mf then
-            text = text .. " · " .. lookup.favor(entry.mf)
-        end
-        add("Vendor", text)
-    end
-    if src:find("q", 1, true) then
-        local parts = {}
-        for _, quest in ipairs(entry.q or {}) do
-            if not quest[3] or quest[3] == side then
-                local title = lookup.quest(quest[1])
-                local zone = quest[2] and quest[2] > 0 and lookup.zone(quest[2])
-                parts[#parts + 1] = (title or "A quest") .. (zone and zone ~= "" and (" in " .. zone) or "")
-            end
-        end
-        add("Quest", #parts > 0 and table.concat(parts, "; ") or "A quest for the other faction")
-    end
-    if src:find("d", 1, true) then
-        add("Drop", "Dropped by monsters")
-    end
-    if src:find("c", 1, true) then
-        add("Crafted", "Made by another profession")
-    end
-    if src:find("w", 1, true) then
-        add("World", "Found in the world")
-    end
+    if src:find("a", 1, true) then add("Known", "Every crafter starts with it") end
+    if src:find("t", 1, true) then add("Trainer", entry.cost and lookup.money(entry.cost) or "") end
+    if src:find("v", 1, true) then add("Vendor", vendorSourceText(entry, side, lookup)) end
+    if src:find("q", 1, true) then add("Quest", questSourceText(entry, side, lookup)) end
+    if src:find("d", 1, true) then add("Drop", "Dropped by monsters") end
+    if src:find("c", 1, true) then add("Crafted", "Made by another profession") end
+    if src:find("w", 1, true) then add("World", "Found in the world") end
     for i = 1, #(entry.rep or {}), 2 do
         local name = lookup.factionName(entry.rep[i])
         if name then

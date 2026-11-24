@@ -1,5 +1,6 @@
 local ADDON, ns = ...
 
+-- Shared addon namespace, refresh pub/sub, chat printing, and formatting helpers.
 ns.name = ADDON
 ns.TITLE = "Marketplace"
 ns.ICON = "Interface\\AddOns\\Marketplace\\Media\\icon"
