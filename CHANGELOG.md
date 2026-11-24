@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.8
+
+- Window: remembers its position between sessions, adds scrollbars to the recipe list and member dropdown, adds a clear button to the search box, closes the member dropdown when clicking outside, and clears the details pane when no recipes match.
+- Tooltips: offline crafters now appear grey as intended, forbidden tooltips are skipped safely, and `/mkt tooltips` toggles Marketplace tooltip lines on or off.
+- Auctionator: crafted item and pattern prices now use auction house prices rather than vendor values, multi-output recipes account for craft yield, and missing reagents without a price are flagged.
+- Sync & scanning: fixed random jitter on the 15-minute sync check, coalesced login presence replies, reset session state when switching guilds, disabled Refresh while on cooldown, sped up skill-level updates, handled dropping your last crafting profession, and kept recipe metadata session-only instead of saving it to disk.
+- Fixes: verified whisper chat mode before inserting tell text, preserved your character's guild name at login, trimmed search whitespace, and initialized the minimap button and guild tab after loading the theme.
+
 ## 0.1.7
 
 - The Track recipe checkbox sat on top of the "Mats cost" tile: it's now in the recipe header, under the favorite star.
