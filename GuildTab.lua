@@ -48,11 +48,23 @@ local function place()
     tab:SetShown(IsInGuild())
 end
 
--- Again once the window has settled (tabs appear a frame or two later).
+local GuildTab = {}
+ns.GuildTab = GuildTab
+
+-- Again once the window has settled (tabs appear a frame or two later);
+-- coalesced so bursts of tab Show/Hide hooks don't stack redundant timers.
+local placePending = false
 local function placeSoon()
     place()
+    if placePending then
+        return
+    end
+    placePending = true
     C_Timer.After(0, place)
-    C_Timer.After(0.3, place)
+    C_Timer.After(0.3, function()
+        placePending = false
+        place()
+    end)
 end
 
 local function onClick(self)
@@ -62,6 +74,7 @@ local function onClick(self)
     ns.Window.Show()
 end
 
+local events
 local function create()
     local frame = CommunitiesFrame
     if tab or not frame then
@@ -85,9 +98,11 @@ local function create()
         tab = ns.W.IconButton(frame, 40, ns.ICON, "Mkt", function()
             return "Marketplace", "Who in the guild can craft what."
         end, onClick)
-        tab:SetIcon(ns.ICON, "Mkt")
     end
     ns.guildTab = tab
+    if events then
+        events:UnregisterEvent("ADDON_LOADED")
+    end
     frame:HookScript("OnShow", placeSoon)
     for _, key in ipairs(TAB_KEYS) do
         local t = frame[key]
@@ -99,11 +114,21 @@ local function create()
     placeSoon()
 end
 
-local events = CreateFrame("Frame")
-events:RegisterEvent("ADDON_LOADED")
-events:RegisterEvent("PLAYER_LOGIN")
-events:SetScript("OnEvent", function(_, event, name)
-    if (event == "ADDON_LOADED" and name == "Blizzard_Communities") or event == "PLAYER_LOGIN" then
-        create()
+function GuildTab.Update()
+    if tab then
+        placeSoon()
     end
-end)
+end
+
+function GuildTab.Init()
+    create()
+    if not tab and not events then
+        events = CreateFrame("Frame")
+        events:RegisterEvent("ADDON_LOADED")
+        events:SetScript("OnEvent", function(_, _, name)
+            if name == "Blizzard_Communities" then
+                create()
+            end
+        end)
+    end
+end

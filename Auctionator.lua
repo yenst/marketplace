@@ -29,13 +29,46 @@ local function call(name, ...)
     return nil
 end
 
--- Unit price in copper: the last auction price, or what a vendor sells it for
--- when Auctionator knows that (thread, flux, vials...).
+-- Unit price in copper for a reagent: vendor price when Auctionator knows it
+-- (thread, flux, vials...), otherwise the last auction price.
 function AH.Price(itemID)
     if not itemID then
         return nil
     end
     return call("GetVendorPriceByItemID", itemID) or call("GetAuctionPriceByItemID", itemID)
+end
+
+-- Last auction house price in copper (ignoring vendor prices, so crafted
+-- items and limited-supply patterns reflect the auction house).
+function AH.AuctionPrice(itemID)
+    if not itemID then
+        return nil
+    end
+    return call("GetAuctionPriceByItemID", itemID)
+end
+
+-- Craft yield (average count and display label, e.g. "x3" or "1-3") from a
+-- catalog entry's `n` field or a scanned schematic's quantityMin/quantityMax.
+function AH.CraftYield(n, meta)
+    local lo, hi
+    if type(n) == "number" and n > 1 then
+        lo, hi = n, n
+    elseif type(n) == "string" then
+        local a, b = n:match("^(%d+)%-(%d+)$")
+        if a and b then
+            lo, hi = tonumber(a), tonumber(b)
+        end
+    elseif meta and meta.qtyMin and meta.qtyMin > 0 then
+        lo = meta.qtyMin
+        hi = meta.qtyMax and meta.qtyMax >= lo and meta.qtyMax or lo
+    end
+    if not lo or (lo == 1 and (not hi or hi == 1)) then
+        return 1, nil
+    end
+    if hi and hi ~= lo then
+        return (lo + hi) / 2, lo .. "-" .. hi
+    end
+    return lo, "x" .. lo
 end
 
 -- Days since the item was last seen at the auction house (nil if > 21 days
@@ -48,9 +81,11 @@ end
 --   reagents = { { itemID, need }, ... }
 --   priceOf(itemID) -> copper per unit or nil, countOf(itemID) -> how many you have
 -- Returns { lines = { [i] = { cost, missing, missingCost } }, total, missingTotal,
---           unknown = number of reagents without a price, missing = { { itemID, count } } }
+--           unknown = number of reagents without a price,
+--           missingUnknown = number of missing reagents without a price,
+--           missing = { { itemID, count } } }
 function AH.Costs(reagents, priceOf, countOf)
-    local out = { lines = {}, total = 0, missingTotal = 0, unknown = 0, missing = {} }
+    local out = { lines = {}, total = 0, missingTotal = 0, unknown = 0, missingUnknown = 0, missing = {} }
     for i, r in ipairs(reagents or {}) do
         local id, need = r[1], r[2]
         local unit = priceOf(id)
@@ -63,6 +98,9 @@ function AH.Costs(reagents, priceOf, countOf)
             out.missingTotal = out.missingTotal + line.missingCost
         else
             out.unknown = out.unknown + 1
+            if short > 0 then
+                out.missingUnknown = out.missingUnknown + 1
+            end
         end
         if short > 0 then
             out.missing[#out.missing + 1] = { id, short }

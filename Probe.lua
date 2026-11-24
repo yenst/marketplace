@@ -118,9 +118,18 @@ end
 function Probe.Resolve()
     local T = C_TradeSkillUI or {}
     local ids = {}
-    for id in pairs(MarketplaceDB.recipes or {}) do
+    for id in pairs(ns.Scanner and ns.Scanner.Cache or {}) do
         ids[#ids + 1] = id
         if #ids == 3 then break end
+    end
+    if #ids == 0 and ns.char then
+        for _, p in pairs(ns.char.professions or {}) do
+            for id in pairs(p.recipes or {}) do
+                ids[#ids + 1] = id
+                if #ids == 3 then break end
+            end
+            if #ids == 3 then break end
+        end
     end
     if #ids == 0 then
         ns.Print("no recipes cached yet: open a profession window once, close it, then run this")

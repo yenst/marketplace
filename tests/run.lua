@@ -23,13 +23,6 @@ local function eq(actual, expected, label)
     end
 end
 
-test("FormatMoney", function()
-    eq(ns.FormatMoney(0), "0c")
-    eq(ns.FormatMoney(12345), "1g 23s 45c")
-    eq(ns.FormatMoney(450000), "45g")
-    eq(ns.FormatMoney(250), "2s 50c")
-end)
-
 test("Plural", function()
     eq(ns.Plural(1, "recipe"), "1 recipe")
     eq(ns.Plural(3, "recipe"), "3 recipes")
@@ -102,13 +95,13 @@ test("Scanner.Collect ignores linked, guild and NPC windows", function()
     eq(ns.Scanner.Collect(nil), nil, "no API")
 end)
 
-test("Scanner.Store saves per profession and fills the cache", function()
-    ns.db = { recipes = {} }
+test("Scanner.Store saves per profession and fills the session cache", function()
+    ns.Scanner.Cache = {}
     local char = {}
     local prof, meta = ns.Scanner.Collect(fakeTradeSkill())
     ns.Scanner.Store(char, prof, meta, 1000)
     eq(char.professions[164].scannedAt, 1000)
-    eq(ns.db.recipes[1263073].prof, 164)
+    eq(ns.Scanner.Cache[1263073].prof, 164)
     eq(ns.Scanner.Store(char, nil, nil, 1), nil, "nothing to store")
 end)
 
@@ -192,8 +185,23 @@ test("Scanner.DropUnlearned forgets professions only when the client agrees", fu
     local char = { professions = { [164] = {}, [185] = {} } }
     ns.Scanner.DropUnlearned(char, { [999] = true })
     assert(char.professions[164] and char.professions[185], "no overlap: IDs differ, keep everything")
-    ns.Scanner.DropUnlearned(char, { [164] = true })
+    assert(ns.Scanner.DropUnlearned(char, { [164] = true }), "Cooking unlearned")
     assert(char.professions[164] and not char.professions[185], "Cooking unlearned")
+    -- Dropping the last crafting profession in favour of a known gathering profession.
+    assert(ns.Scanner.DropUnlearned(char, { [182] = true }), "switched to Herbalism")
+    eq(char.professions[164], nil, "Blacksmithing dropped")
+end)
+
+test("Scanner.SyncSkills updates levels without scanning recipes", function()
+    local char = { professions = { [164] = { id = 164, skill = 40, maxSkill = 75, recipes = { [1] = 0 } } } }
+    local catalog = { [164] = {}, [185] = {} }
+    local changed, needsFull = ns.Scanner.SyncSkills(char, { [164] = { skill = 41, maxSkill = 75 } }, catalog)
+    assert(changed and not needsFull, "skill bumped without full scan")
+    eq(char.professions[164].skill, 41)
+    changed, needsFull = ns.Scanner.SyncSkills(char, { [164] = { skill = 41, maxSkill = 75 } }, catalog)
+    assert(not changed and not needsFull, "no change")
+    changed, needsFull = ns.Scanner.SyncSkills(char, { [164] = { skill = 41, maxSkill = 75 }, [185] = { skill = 1, maxSkill = 75 } }, catalog)
+    assert(needsFull, "newly learned catalog profession triggers full scan")
 end)
 
 test("Sync.Shareable leaves out professions without recipes", function()
@@ -346,9 +354,17 @@ test("Data.Index lists crafters per recipe, online first", function()
     eq(reaper.crafters[3].name, "Kael Sun", "then offline")
     eq(reaper.catName, "Weapons")
     eq(recipes[7].catName, "Other", "category 0")
-    local list = ns.Data.ProfessionList(profs)
-    eq(list[1].name, "Blacksmithing")
-    eq(list[2].name, "Cooking")
+    assert(profs[164] and profs[185], "both professions indexed")
+end)
+
+test("Data.Index upgrades Other category when a later crafter has the real one", function()
+    local crafters = {
+        { key = "Alice", name = "Alice", state = "addon", professions = { [164] = { name = "Blacksmithing", recipes = { [100] = 0 }, categories = {} } } },
+        { key = "Bob", name = "Bob", state = "addon", professions = { [164] = { name = "Blacksmithing", recipes = { [100] = 10 }, categories = { [10] = { name = "Weapons" } } } } },
+    }
+    local recipes = ns.Data.Index(crafters)
+    eq(recipes[100].cat, 10)
+    eq(recipes[100].catName, "Weapons")
 end)
 
 test("Data.List groups by category, filters and collapses", function()
@@ -365,8 +381,8 @@ test("Data.List groups by category, filters and collapses", function()
     items = ns.Data.List(recipes, { prof = "all", query = "" }, metaOf, itemName)
     eq(items[1].label, "Blacksmithing", "All groups by profession")
 
-    items, count = ns.Data.List(recipes, { prof = "all", query = "bar" }, metaOf, itemName)
-    eq(count, 1, "search matches reagent names")
+    items, count = ns.Data.List(recipes, { prof = "all", query = " bar " }, metaOf, itemName)
+    eq(count, 1, "search trims whitespace and matches reagent names")
     eq(items[2].name, "Arcanite Reaper")
     items, count = ns.Data.List(recipes, { prof = "all", query = "kael" }, metaOf, itemName)
     eq(count, 2, "search matches crafter names")
@@ -399,11 +415,31 @@ test("AH.Costs totals reagents and what you're missing", function()
     eq(c.total, 16 * 500 + 6 * 10000)
     eq(c.missingTotal, 5 * 10000, "only the 5 Gold Bars you lack")
     eq(c.unknown, 1)
+    eq(c.missingUnknown, 1, "unpriced reagent is also missing")
     eq(#c.missing, 2, "short on items 2 and 3")
     eq(c.missing[1][1], 2)
     eq(c.missing[1][2], 5)
     eq(c.lines[1].missing, 0)
     eq(c.lines[3].cost, nil, "no price, no cost")
+end)
+
+test("AH.AuctionPrice ignores vendor prices and AH.CraftYield parses yields", function()
+    local prev = _G.Auctionator
+    _G.Auctionator = { API = { v1 = {
+        GetVendorPriceByItemID = function(_, id) return id == 50 and 100 or nil end,
+        GetAuctionPriceByItemID = function(_, id) return id == 50 and 50000 or nil end,
+    } } }
+    eq(ns.AH.Price(50), 100, "reagent price prefers vendor")
+    eq(ns.AH.AuctionPrice(50), 50000, "auction price ignores vendor")
+    _G.Auctionator = prev
+    local y, label = ns.AH.CraftYield(nil, nil)
+    eq(y, 1); eq(label, nil)
+    y, label = ns.AH.CraftYield(3, nil)
+    eq(y, 3); eq(label, "x3")
+    y, label = ns.AH.CraftYield("1-3", nil)
+    eq(y, 2); eq(label, "1-3")
+    y, label = ns.AH.CraftYield(nil, { qtyMin = 2, qtyMax = 4 })
+    eq(y, 3); eq(label, "2-4")
 end)
 
 test("AH without Auctionator does nothing", function()
@@ -457,6 +493,15 @@ test("Data.Index adds catalog recipes nobody has", function()
     local items = ns.Data.List(recipes, { prof = 185 }, metaOf, itemName)
     eq(items[#items - 1].label, ns.Data.NOBODY, "nobody's recipes come last")
     eq(ns.Data.CrafterText(items[#items]), "Skill 50")
+    -- Collapsed "Not in your guild" skips meta lookups while keeping exact count.
+    local metaCalls = 0
+    local collapsedItems, collapsedCount = ns.Data.List(recipes, { prof = 185, collapsed = { [ns.Data.NOBODY] = true } }, function(id)
+        if id == 8 then metaCalls = metaCalls + 1 end
+        return metaOf(id)
+    end, itemName)
+    eq(metaCalls, 0, "collapsed unlearned recipes don't call metaOf")
+    eq(collapsedCount, 2, "total count still includes collapsed group")
+    eq(collapsedItems[#collapsedItems].count, 1, "collapsed header shows exact count")
     local all = ns.Data.List(recipes, { prof = "all" }, metaOf, itemName)
     for _, item in ipairs(all) do
         assert(item.label ~= ns.Data.NOBODY, "not in All professions unless searching")

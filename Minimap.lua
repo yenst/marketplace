@@ -1,9 +1,12 @@
 local _, ns = ...
 
+local Minimap = {}
+ns.Minimap = Minimap
+
 -- Minimap button through LibDataBroker + LibDBIcon (embedded by the
 -- packager, or from another addon). Without them there's no button; the
 -- slash command and the guild window tab still open Marketplace.
-local function setup()
+function Minimap.Init()
     local LibStub = _G.LibStub
     local ldb = LibStub and LibStub("LibDataBroker-1.1", true)
     local icon = LibStub and LibStub("LibDBIcon-1.0", true)
@@ -21,7 +24,10 @@ local function setup()
         end,
     })
     local settings = ns.db.settings
-    settings.minimap = settings.minimap or { hide = not settings.minimapButton }
+    if not settings.minimap then
+        settings.minimap = { hide = settings.minimapButton == false }
+    end
+    settings.minimapButton = nil
     icon:Register("Marketplace", launcher, settings.minimap)
     ns.minimapIcon = icon
 end
@@ -41,7 +47,3 @@ function ns.ToggleMinimapButton()
     end
     ns.Print("Minimap button " .. (settings.minimap.hide and "hidden" or "shown") .. ".")
 end
-
-local events = CreateFrame("Frame")
-events:RegisterEvent("PLAYER_LOGIN")
-events:SetScript("OnEvent", setup)

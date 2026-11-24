@@ -356,7 +356,7 @@ local function debug(msg)
 end
 
 local function now()
-    return GetServerTime and GetServerTime() or time()
+    return ns.Now()
 end
 
 -- Outgoing lines: control lines go ahead of copies; a copy's lines carry a
@@ -400,11 +400,6 @@ local function enqueue(item, control)
         pumping = true
         pump()
     end
-end
-
--- Queues an addon message.
-function Sync.Send(text, channel, target, prefix)
-    enqueue({ prefix = prefix or Sync.PREFIX, text = text, channel = channel, target = target })
 end
 
 local function control(text)
@@ -684,15 +679,18 @@ end
 
 local REQUEST_TIMEOUT = 30
 local requested = {}   -- owner -> { hash, at } asked for (by us or someone)
-local wanted = {}      -- owner -> hash to ask for in the next R
+local wanted = {}      -- owner -> { hash, stamp } to ask for in the next R
 local askPending = false
-local retried = {}     -- "owner=hash" -> true once re-asked
+local retried = {}     -- owner -> hash once re-asked (bounded by guild size)
 local want
 
-local function have(owner, hash)
+local function haveOrNewer(owner, hash, stamp)
     local data = Sync.GuildData()
     local entry = data and data[owner]
-    return entry and entry.hash == hash
+    if not entry then
+        return false
+    end
+    return entry.hash == hash or (stamp ~= nil and entryStamp(entry) >= stamp)
 end
 
 local function askedRecently(owner, hash)
@@ -704,18 +702,18 @@ local function flushAsks()
     askPending = false
     local items = {}
     for _, owner in ipairs(sortedKeys(wanted)) do
-        items[#items + 1] = owner .. "=" .. wanted[owner]
-        requested[owner] = { hash = wanted[owner], at = time() }
+        local w = wanted[owner]
+        items[#items + 1] = owner .. "=" .. w.hash
+        requested[owner] = { hash = w.hash, at = time() }
     end
     local asked = wanted
     wanted = {}
-    -- No copy came: ask once more after the timeout.
+    -- No copy came: ask once more after the timeout (unless a newer copy arrived).
     C_Timer.After(REQUEST_TIMEOUT + 5, function()
-        for owner, hash in pairs(asked) do
-            local key = owner .. "=" .. hash
-            if not have(owner, hash) and not retried[key] then
-                retried[key] = true
-                want(owner, hash)
+        for owner, w in pairs(asked) do
+            if not haveOrNewer(owner, w.hash, w.stamp) and retried[owner] ~= w.hash then
+                retried[owner] = w.hash
+                want(owner, w.hash, w.stamp)
             end
         end
     end)
@@ -729,11 +727,11 @@ local function flushAsks()
     end
 end
 
-function want(owner, hash)
-    if askedRecently(owner, hash) or have(owner, hash) then
+function want(owner, hash, stamp)
+    if askedRecently(owner, hash) or haveOrNewer(owner, hash, stamp) then
         return
     end
-    wanted[owner] = hash
+    wanted[owner] = { hash = hash, stamp = stamp }
     if not askPending then
         askPending = true
         C_Timer.After(jitter("ask"), flushAsks)
@@ -786,6 +784,14 @@ local function refreshFinish(r)
     end
     r.done = time()
     refreshChanged()
+    local left = r.at + Sync.REFRESH_GAP - time()
+    if left > 0 and C_Timer and C_Timer.After then
+        C_Timer.After(left, function()
+            if refresh == r then
+                refreshChanged()
+            end
+        end)
+    end
 end
 
 -- Something happened: the refresh is over once nothing else does for delay.
@@ -808,6 +814,17 @@ function Sync.RefreshState()
     if refresh then
         return refresh.phase, refresh.got, refresh.got + refresh.pending
     end
+end
+
+-- Seconds until another manual refresh is allowed (0 when ready).
+function Sync.RefreshCooldown()
+    if not refresh then
+        return 0
+    end
+    if not refresh.done then
+        return Sync.REFRESH_GAP
+    end
+    return math.max(0, refresh.at + Sync.REFRESH_GAP - time())
 end
 
 -- Bucket lists ----------------------------------------------------------------
@@ -878,7 +895,7 @@ local function reconcile(list, bucket)
         return owner == key or isSelf(owner) or leftGuild(roster, owner)
     end)
     for _, owner in ipairs(wantedOwners) do
-        want(owner, list[owner].hash)
+        want(owner, list[owner].hash, list[owner].stamp)
     end
     for _, owner in ipairs(offer) do
         schedule(owner, jitter(owner))
@@ -889,7 +906,7 @@ end
 -- Handlers --------------------------------------------------------------------
 
 local handlers = {}
-local presence = {}            -- newcomer -> true once we said we're here
+local presencePending = false  -- coalesce simultaneous login hellos into one A reply
 local lastMatchAt = -math.huge -- last time someone's digest matched ours
 
 local function ready()
@@ -909,13 +926,13 @@ function handlers.H(sender, rest)
         return
     end
     debug("hello from " .. sender)
-    presence[sender] = nil
-    C_Timer.After(math.random() * 6, function()
-        if not presence[sender] then
-            presence[sender] = true
+    if not presencePending then
+        presencePending = true
+        C_Timer.After(math.random() * 6, function()
+            presencePending = false
             control("A:" .. Sync.VERSION .. ":" .. Sync.MyHash())
-        end
-    end)
+        end)
+    end
     if not matches(digest) then
         answerDigest(sender, digest)
     end
@@ -992,7 +1009,7 @@ function handlers.R(sender, rest)
     end
     local data, key = Sync.GuildData(), selfKey()
     for owner, hash in list:gmatch("([^,=]+)=(%x+)") do
-        if wanted[owner] == hash then
+        if wanted[owner] and wanted[owner].hash == hash then
             wanted[owner] = nil -- someone else asked: we needn't
         end
         requested[owner] = { hash = hash, at = time() }
@@ -1018,7 +1035,7 @@ local function onBegin(sender, line)
         return
     end
     owner = owner or sender
-    if wanted[owner] == hash then
+    if wanted[owner] and wanted[owner].hash == hash then
         wanted[owner] = nil
     end
     if isSelf(owner) then
@@ -1045,7 +1062,7 @@ local function store(sender, professions, hash, owner, stamp)
         return
     end
     if not owner then
-        data[sender] = { professions = professions, hash = hash, stamp = stamp, updated = time() }
+        data[sender] = { professions = professions, hash = hash, stamp = stamp, updated = now() }
         debug("received " .. sender .. "'s recipes")
     else
         if isSelf(owner) then
@@ -1067,10 +1084,12 @@ local function store(sender, professions, hash, owner, stamp)
         data[owner] = { professions = professions, hash = hash, stamp = stamp, updated = stamp, via = sender }
         debug(string.format("received %s's recipes via %s", owner, sender))
     end
-    requested[owner or sender] = nil
+    local key = owner or sender
+    requested[key] = nil
+    retried[key] = nil
     local r = refreshing()
-    if r and r.wanted[owner or sender] then
-        r.wanted[owner or sender] = nil
+    if r and r.wanted[key] then
+        r.wanted[key] = nil
         r.pending, r.got = r.pending - 1, r.got + 1
         refreshWait(r, r.pending > 0 and Sync.REFRESH_GIVE_UP or Sync.REFRESH_SETTLE)
     end
@@ -1122,6 +1141,18 @@ function Sync.RequestRoster()
     end
 end
 
+-- Clears per-guild session state when switching to a different guild mid-session.
+local function resetSession()
+    Sync.seen = {}
+    decoders = {}
+    requested, wanted, retried = {}, {}, {}
+    pendingSend, pendingList, incoming = {}, {}, {}
+    presencePending = false
+    lastMatchAt = -math.huge
+    refresh = nil
+    rosterSize, rosterSince = nil, nil
+end
+
 -- At login (force): hello with our digest; whoever differs lists the
 -- buckets that differ. Otherwise (a scan changed something): schedule a
 -- broadcast of our recipes.
@@ -1142,7 +1173,11 @@ function Sync.Announce(force, tries)
         end
         return
     end
-    Sync.helloGuild = GetGuildInfo("player")
+    local guild = GetGuildInfo("player")
+    if Sync.helloGuild and Sync.helloGuild ~= guild then
+        resetSession()
+    end
+    Sync.helloGuild = guild
     Sync.RequestRoster()
     debug("hello to guild")
     control(string.format("H:%s:%s:%s:%s", Sync.VERSION, Sync.MyHash(), Sync.code, Sync.Digest(myState(members()))))
@@ -1160,11 +1195,11 @@ end
 -- since the last check (then the guild already agrees). A random wait first,
 -- so clients that started together don't all send one.
 Sync.CHECK_INTERVAL = 900
-function Sync.Check(now)
+function Sync.Check(immediate)
     if not IsInGuild() or not ready() or time() - lastMatchAt < Sync.CHECK_INTERVAL then
         return
     end
-    if not now then
+    if immediate ~= true then
         C_Timer.After(math.random() * 60, function() Sync.Check(true) end)
         return
     end
@@ -1228,6 +1263,6 @@ end
 function Sync.Init()
     C_ChatInfo.RegisterAddonMessagePrefix(Sync.PREFIX)
     if C_Timer.NewTicker then
-        C_Timer.NewTicker(Sync.CHECK_INTERVAL, Sync.Check)
+        C_Timer.NewTicker(Sync.CHECK_INTERVAL, function() Sync.Check() end)
     end
 end

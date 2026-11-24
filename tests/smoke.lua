@@ -2,6 +2,7 @@
 -- catch nil errors and typos without the game. Run from the repo root:
 --   lua5.1 tests/smoke.lua
 date, time = os.date, os.time
+unpack = unpack or table.unpack
 
 -- Mock frames: any unknown method is a no-op returning nil.
 local Frame = {}
@@ -37,6 +38,7 @@ function Frame:GetPoint() return "CENTER", nil, "CENTER", 0, 0 end
 function Frame:CreateTexture() return newFrame("Texture") end
 function Frame:CreateFontString() return newFrame("FontString") end
 function Frame:RegisterEvent(e) local ev = rawget(self, "events") or {}; rawset(self, "events", ev); ev[e] = true end
+function Frame:UnregisterEvent(e) local ev = rawget(self, "events"); if ev then ev[e] = nil end end
 function Frame:GetItem() return "Wolf Pelt", "|cffffffff|Hitem:750::::::::30:::::|h[Wolf Pelt]|h|r" end
 function Frame:AddLine(text) rawset(self, "lastLine", text) end
 
@@ -133,7 +135,8 @@ end
 fire("TRADE_SKILL_SHOW")
 local me = MarketplaceDB.chars["Tester-Mirage"]
 assert(me and me.professions[164], "profession window gets scanned")
-assert(MarketplaceDB.recipes[2665].name == "Recipe 2665", "recipe cache filled")
+assert(ns.Scanner.Cache[2665].name == "Recipe 2665", "session recipe cache filled")
+assert(MarketplaceDB.recipes == nil, "recipe metadata is not saved to SavedVariables")
 SlashCmdList.MARKETPLACE("status")
 assert(chat[#chat]:find("Blacksmithing 215/300 %(2 recipes%)"), "status lists the scan")
 
@@ -150,11 +153,6 @@ C_ChatInfo.SendAddonMessage = function(prefix, text, channel, target)
     return 0
 end
 local function addon(text, channel, sender) fire("CHAT_MSG_ADDON", "Marketplace", text, channel, sender) end
-local function sentTo(target, pattern)
-    for _, m in ipairs(out) do
-        if m.target == target and m.text:find(pattern) then return true end
-    end
-end
 
 -- Timers run when the test says so (flush), so waits can be raced.
 local timers = {}
@@ -216,6 +214,26 @@ assert(sent("^A:2:" .. myHash .. "$"), "presence reply")
 local myBucket = ns.Sync.BucketOf("Tester Joel")
 assert(sent("^L:2:Dan%-Mirage:" .. myBucket .. ":0:.*Tester Joel=" .. myHash .. "=%d+"), "our bucket listed for Dan")
 
+-- noteGuild preserves saved guild when IsInGuild() is true but GetGuildInfo()
+-- hasn't populated yet right after login.
+me.guild = "Test Guild"
+local oldGetGuild = GetGuildInfo
+GetGuildInfo = function() return nil end
+fire("PLAYER_GUILD_UPDATE")
+assert(me.guild == "Test Guild", "saved guild not wiped while GetGuildInfo is nil")
+GetGuildInfo = oldGetGuild
+fire("PLAYER_GUILD_UPDATE")
+assert(me.guild == "Test Guild", "saved guild kept")
+
+-- Simultaneous login hellos coalesce into one presence reply.
+out = {}
+addon("H:2:" .. danHash .. ":aaaaaa:" .. digestOf(bothKnown), "GUILD", "Dan-Mirage")
+addon("H:2:" .. danHash .. ":bbbbbb:" .. digestOf(bothKnown), "GUILD", "Gus-Mirage")
+flush()
+local presenceCount = 0
+for _, m in ipairs(out) do if m.text:find("^A:2:") then presenceCount = presenceCount + 1 end end
+assert(presenceCount == 1, "simultaneous hellos coalesce into one A reply, got " .. presenceCount)
+
 -- Up to date: just the presence line.
 out = {}
 addon("H:2:" .. danHash .. ":aaaaaa:" .. digestOf(bothKnown), "GUILD", "Dan-Mirage")
@@ -264,6 +282,22 @@ addon("L:2:Ivy-Mirage:" .. ns.Sync.BucketOf("Kim-Mirage") .. ":0:Kim-Mirage=1234
 addon("R:2:Kim-Mirage=1234abcd", "GUILD", "Lou-Mirage")
 flush()
 assert(not sent("^R:"), "Lou already asked for Kim")
+
+-- Retry timer doesn't re-request an older hash if a newer copy already arrived.
+do
+    local neo1 = { [197] = { id = 197, name = "Tailoring", skill = 50, maxSkill = 75, recipes = { [2330] = 0 }, categories = {} } }
+    local neo2 = { [197] = { id = 197, name = "Tailoring", skill = 60, maxSkill = 75, recipes = { [2330] = 0, [2385] = 0 }, categories = {} } }
+    local _, neo1Hash = ns.Sync.Encode(neo1, "Neo-Mirage", 10)
+    local neo2Lines, neo2Hash = ns.Sync.Encode(neo2, "Neo-Mirage", 20)
+    out = {}
+    addon("L:2:Ivy-Mirage:" .. ns.Sync.BucketOf("Neo-Mirage") .. ":0:Neo-Mirage=" .. neo1Hash .. "=10", "GUILD", "Gus-Mirage")
+    table.remove(timers, 1)() -- flushAsks runs and queues the retry timer
+    for _, line in ipairs(neo2Lines) do addon(line, "GUILD", "Gus-Mirage") end
+    out = {}
+    flush() -- retry timer fires
+    assert(not sent("^R:.*Neo%-Mirage=" .. neo1Hash), "newer copy arrived: don't retry obsolete hash")
+    MarketplaceDB.guilds["Test Guild"]["Neo-Mirage"] = nil
+end
 
 -- Older relayed copies are ignored; an old copy of us makes us send ours.
 local oldEve = { [197] = { id = 197, name = "Tailoring", skill = 1, maxSkill = 75, recipes = { [2329] = 0 }, categories = {} } }
@@ -357,7 +391,8 @@ ns.Sync.Check()
 assert(#out == 0, "a digest matched ours recently: no check")
 local realTime = time
 time = function() return realTime() + 1200 end
-ns.Sync.Check()
+ns.Sync.Check({ ticker = true }) -- NewTicker passes ticker object: must still wait!
+assert(#out == 0, "ticker arg doesn't bypass the random check delay")
 flush() -- after a random wait
 assert(sent("^D:2:%x+$"), "periodic digest check")
 out = {}
@@ -377,10 +412,12 @@ assert(ns.Sync.RequestLatest(), "refresh starts")
 assert(sent("^D:2:%x+$") and ns.Sync.RefreshState() == "checking", "refresh posts our digest")
 flush()
 assert(ns.Sync.RefreshState() == "current", "silence: up to date, got " .. tostring(ns.Sync.RefreshState()))
+assert(ns.Sync.RefreshCooldown() > 0, "cooldown active right after refresh")
 local again, why = ns.Sync.RequestLatest()
 assert(not again and why == "wait", "no second refresh straight away")
 -- Later: Gus lists a newer copy of Zed for us. We ask for it, and only it.
 time = function() return realTime() + 60 end
+assert(ns.Sync.RefreshCooldown() == 0, "cooldown expired after gap")
 out = {}
 assert(ns.Sync.RequestLatest(), "refresh again after the gap")
 local zed = { [197] = { id = 197, name = "Tailoring", skill = 9, maxSkill = 75, recipes = { [2385] = 0 }, categories = {} } }
@@ -457,7 +494,7 @@ C_TradeSkillUI.GetTradeSkillTexture = function() return 136241 end
 local told, inserted
 ChatFrame_SendTell = function(name) told = name end
 ChatEdit_GetActiveWindow = function() return { Insert = function(_, text) inserted = text end } end
-MarketplaceDB.recipes[18238] = { name = "Spotted Yellowtail", item = 13927, reagents = { { 13754, 1 } } }
+ns.Scanner.Cache[18238] = { name = "Spotted Yellowtail", item = 13927, reagents = { { 13754, 1 } } }
 
 CLASS_ICON_TCOORDS = { PALADIN = { 0.5, 0.75, 0.5, 0.75 }, WARRIOR = { 0, 0.25, 0, 0.25 } }
 local win = _G.MarketplaceWindow
@@ -514,7 +551,7 @@ do
     ChatFrame_SendTell, ChatEdit_GetActiveWindow, C_TradeSkillUI.GetRecipeLink = nil, nil, function() return nil end
     told, inserted = nil, nil
     local oldAfter = C_Timer.After
-    local box = { setText = 1, Insert = function(_, text) inserted = text end }
+    local box = { setText = 1, GetAttribute = function(_, k) return k == "chatType" and "WHISPER" or nil end, Insert = function(_, text) inserted = text end }
     ChatFrameUtil = {
         SendTell = function(name) told = name end,
         GetActiveWindow = function() return box end,
@@ -527,9 +564,15 @@ do
     assert(inserted == nil and #waits == 1, "waits while the game still has to set the text")
     box.setText = 0
     table.remove(waits, 1)()
-    C_Timer.After = oldAfter
     assert(told == "Dan" and inserted and inserted:find("Henchant:18238|h[Cooking: Spotted Yellowtail]", 1, true),
         "whisper through ChatFrameUtil with a built link: " .. tostring(inserted))
+    -- If the active chat box switched away from WHISPER, don't paste into guild chat.
+    inserted = nil
+    box.GetAttribute = function(_, k) return k == "chatType" and "GUILD" or nil end
+    win.crafters[1].whisper.scripts.OnClick(win.crafters[1].whisper)
+    table.remove(waits, 1)()
+    assert(inserted == nil, "doesn't insert whisper text into guild chat")
+    C_Timer.After = oldAfter
     ChatFrameUtil = nil
     ChatFrame_SendTell, ChatEdit_GetActiveWindow, C_TradeSkillUI.GetRecipeLink = oldTell, oldActive, oldLink
 end
@@ -537,8 +580,8 @@ end
 -- Auctionator: reagent prices, mats total, sell price, shopping list.
 local lists = {}
 Auctionator = { API = { v1 = {
-    GetVendorPriceByItemID = function() return nil end,
-    GetAuctionPriceByItemID = function(_, id) return id == 13754 and 2500 or (id == 13927 and 40000 or nil) end,
+    GetVendorPriceByItemID = function(_, id) return id == 13939 and 16000 or nil end,
+    GetAuctionPriceByItemID = function(_, id) return id == 13754 and 2500 or (id == 13927 and 40000 or (id == 13939 and 90000 or nil)) end,
     GetAuctionAgeByItemID = function() return 2 end,
     ConvertToSearchString = function(_, term) return '"' .. term.searchString .. '";;;;;;;;;;;;;;;' .. (term.quantity or "") end,
     CreateShoppingList = function(_, name, strings) lists[name] = strings end,
@@ -553,6 +596,7 @@ assert(plain(win.stats.mats.value.text) == "25s", "mats tile: " .. tostring(win.
 assert(plain(win.stats.short.value.text):find("25s"), "short tile: " .. tostring(win.stats.short.value.text))
 assert(plain(win.stats.sells.value.text) == "4g" and win.stats.sells.label.text == "Sells for · 2d ago", "sells tile")
 assert(win.stats.sells.tipText:find("Profit over the mats: 3g 75s") or plain(win.stats.sells.tipText):find("Profit over the mats: 3g 75s"), "profit in tooltip: " .. plain(win.stats.sells.tipText))
+assert(plain(win.sourceText.text):find("Pattern on the auction house: 9g"), "pattern uses AH price, not vendor price: " .. plain(win.sourceText.text))
 assert(win.shop.shown, "shopping list button when something's missing")
 win.shop.scripts.OnClick(win.shop)
 assert(lists["Marketplace: Spotted Yellowtail"] and lists["Marketplace: Spotted Yellowtail"][1]:find('^"Item 13754"'), "shopping list created")
@@ -568,9 +612,15 @@ win.search:SetText("yellowtail")
 win.search.scripts.OnTextChanged(win.search)
 rows = visibleRows()
 assert(#rows == 2 and rows[2].name == "Spotted Yellowtail", "search narrows the list")
-win.search:SetText("")
+assert(win.search.clear.shown, "search clear button shown while query is non-empty")
+-- Empty search hides detail and source panes (no stale "Where to learn it").
+win.search:SetText("zzzz_no_such_recipe")
 win.search.scripts.OnTextChanged(win.search)
-assert(win.footer.text:find("Data from 2 of 3 guild members"), "footer coverage: " .. tostring(win.footer.text))
+assert(not win.detail.shown and not win.right.shown and not win.source.shown, "empty search hides detail and source")
+win.search.clear.scripts.OnClick(win.search.clear)
+win.search.scripts.OnTextChanged(win.search)
+assert(not win.search.clear.shown and win.detail.shown, "clear button resets search")
+assert(win.footer.text:find("Data from 3 of 3 guild members"), "footer coverage includes own character: " .. tostring(win.footer.text))
 
 -- Favourites: right-click a recipe, it moves under "Favorites" at the top.
 for _, tab in ipairs(win.tabs) do if tab.title == "Cooking" then tab.scripts.OnClick(tab) end end
@@ -656,21 +706,47 @@ assert(tipText:find("Known by: .*Dan.*%(150%)"), "pattern tooltip: " .. tipText)
 tipLines = {}
 ns.AddPatternLines(tip, 13927) -- a fish nobody in the guild can cook
 assert(#tipLines == 0, "nothing on items nobody can craft")
--- Crafted items: Dan cooks Spotted Yellowtail.
+-- Crafted items: Dan cooks Spotted Yellowtail; offline crafters are grey.
 tipLines = {}
 ns.AddPatternLines(tip, 6887)
 tipText = table.concat(tipLines, "\n")
 assert(tipText:find("Crafted by: .*Dan.*%(150%)") and not tipText:find("Known by"), "crafted item tooltip: " .. tipText)
+-- Eve (offline) knows Tailoring recipe 2330 (creates item 2587, Gray Woolen Shirt? check RecipeDB).
+local eveCraft = ns.RecipeDB[197] and ns.RecipeDB[197][2330] and ns.RecipeDB[197][2330].c
+if eveCraft then
+    tipLines = {}
+    ns.AddPatternLines(tip, eveCraft)
+    local eveTip = table.concat(tipLines, "\n")
+    local mutedHex = ns.Theme.Hex(ns.Theme.muted)
+    assert(eveTip:find(mutedHex .. "Eve|r", 1, true), "offline crafter rendered grey: " .. eveTip)
+end
+-- /mkt tooltips toggles tooltip lines off and back on.
+SlashCmdList.MARKETPLACE("tooltips")
+assert(MarketplaceDB.settings.tooltips == false, "tooltips disabled")
+tipLines = {}
+ns.AddPatternLines(tip, 6887)
+assert(#tipLines == 0, "no tooltip lines when disabled")
+SlashCmdList.MARKETPLACE("tooltips")
+assert(MarketplaceDB.settings.tooltips == true, "tooltips re-enabled")
+
+-- Switching guilds mid-session clears old Sync.seen state.
+GetGuildInfo = function() return "Other Guild" end
+ns.Sync.EnsureHello()
+assert(next(ns.Sync.seen) == nil, "guild switch resets Sync.seen")
+GetGuildInfo = function() return "Test Guild" end
 
 -- The Guild & Communities window (loaded on demand) gets a Marketplace tab.
 CommunitiesFrame = CreateFrame("Frame", "CommunitiesFrame")
 CommunitiesFrame.GuildInfoTab = CreateFrame("CheckButton")
+local guildTabFrame
 for _, f in ipairs(allFrames) do
     if rawget(f, "events") and f.events.ADDON_LOADED and f ~= eventFrame then
+        guildTabFrame = f
         f.scripts.OnEvent(f, "ADDON_LOADED", "Blizzard_Communities")
     end
 end
 assert(ns.guildTab and ns.guildTab.shown, "guild window tab")
+assert(guildTabFrame and not guildTabFrame.events.ADDON_LOADED, "GuildTab unregisters ADDON_LOADED once created")
 win:Hide()
 ns.guildTab.scripts.OnClick(ns.guildTab)
 assert(win.shown, "the tab opens Marketplace")

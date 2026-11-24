@@ -159,49 +159,99 @@ function W.IconButton(parent, size, texture, fallback, tooltip, onClick)
     return button
 end
 
--- [-] value [+]  over a fixed list of values.
-function W.Stepper(parent, width, values, format, get, set)
-    local frame = CreateFrame("Frame", nil, parent)
-    frame:SetSize(width, 22)
-    local value = W.Text(frame, 12, Theme.text, "CENTER")
-    value:SetPoint("LEFT", 20, 0)
-    value:SetPoint("RIGHT", -20, 0)
+-- Slim flat scrollbar with a draggable thumb; auto-hides when everything fits.
+-- onScroll(offset) is called with an integer offset in [0, total - visible].
+function W.ScrollBar(parent, onScroll)
+    local track = CreateFrame("Frame", nil, parent)
+    track:SetWidth(6)
+    track:EnableMouse(true)
+    local bg = track:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(unpack(Theme.hairline))
 
-    local function indexOf(v)
-        local best, bestDiff = 1, math.huge
-        for i, candidate in ipairs(values) do
-            if math.abs(candidate - v) < bestDiff then
-                best, bestDiff = i, math.abs(candidate - v)
-            end
+    local thumb = CreateFrame("Button", nil, track)
+    thumb:SetWidth(6)
+    thumb:SetPoint("TOP")
+    local tex = thumb:CreateTexture(nil, "ARTWORK")
+    tex:SetAllPoints()
+    tex:SetColorTexture(Theme.muted[1], Theme.muted[2], Theme.muted[3], 0.65)
+
+    local curOffset, curVisible, curTotal = 0, 1, 0
+    local dragging, hover = false, false
+
+    local function paint()
+        if dragging or hover then
+            tex:SetColorTexture(Theme.accent[1], Theme.accent[2], Theme.accent[3], 0.9)
+        else
+            tex:SetColorTexture(Theme.muted[1], Theme.muted[2], Theme.muted[3], 0.65)
         end
-        return best
-    end
-    local function step(delta)
-        local i = math.max(1, math.min(#values, indexOf(get()) + delta))
-        set(values[i])
-        frame:Update()
     end
 
-    local minus = W.Button(frame, "-", 18, 22, function() step(-1) end)
-    minus:SetPoint("LEFT")
-    local plus = W.Button(frame, "+", 18, 22, function() step(1) end)
-    plus:SetPoint("RIGHT")
-    frame:EnableMouseWheel(true)
-    frame:SetScript("OnMouseWheel", function(_, delta) step(delta) end)
-
-    function frame:Update()
-        value:SetText(format(get()))
+    local function setFromCursor()
+        local maxOffset = math.max(0, curTotal - curVisible)
+        local trackH = track:GetHeight() or 0
+        local thumbH = thumb:GetHeight() or 0
+        local range = trackH - thumbH
+        if maxOffset == 0 or range <= 0 or not GetCursorPosition then
+            return
+        end
+        local top = track:GetTop()
+        local scale = track:GetEffectiveScale() or 1
+        if not top or scale == 0 then
+            return
+        end
+        local _, cy = GetCursorPosition()
+        local y = top - (cy / scale) - thumbH / 2
+        local frac = math.max(0, math.min(1, y / range))
+        local nextOffset = math.floor(frac * maxOffset + 0.5)
+        if nextOffset ~= curOffset then
+            curOffset = nextOffset
+            onScroll(nextOffset)
+        end
     end
-    frame:Update()
-    return frame
-end
 
-function W.Range(from, to, by)
-    local list = {}
-    for v = from, to, by or 1 do
-        list[#list + 1] = v
+    thumb:SetScript("OnEnter", function() hover = true; paint() end)
+    thumb:SetScript("OnLeave", function() hover = false; paint() end)
+    thumb:SetScript("OnMouseDown", function(_, button)
+        if button == "LeftButton" then
+            dragging = true
+            paint()
+            track:SetScript("OnUpdate", setFromCursor)
+        end
+    end)
+    thumb:SetScript("OnMouseUp", function()
+        dragging = false
+        track:SetScript("OnUpdate", nil)
+        paint()
+    end)
+    track:SetScript("OnMouseDown", function(_, button)
+        if button == "LeftButton" then
+            setFromCursor()
+        end
+    end)
+
+    function track:Update(offset, visible, total)
+        curOffset, curVisible, curTotal = offset or 0, visible or 1, total or 0
+        if curTotal <= curVisible then
+            self:Hide()
+            return
+        end
+        self:Show()
+        local trackH = self:GetHeight() or 0
+        if trackH <= 0 then
+            return
+        end
+        local thumbH = math.max(18, math.floor(trackH * (curVisible / curTotal) + 0.5))
+        local maxOffset = curTotal - curVisible
+        local travel = math.max(0, trackH - thumbH)
+        local y = math.floor((math.max(0, math.min(curOffset, maxOffset)) / maxOffset) * travel + 0.5)
+        thumb:SetHeight(thumbH)
+        thumb:ClearAllPoints()
+        thumb:SetPoint("TOP", self, "TOP", 0, -y)
     end
-    return list
+
+    track:Hide()
+    return track
 end
 
 function W.Toggle(parent, label, get, set)
@@ -232,7 +282,7 @@ function W.Toggle(parent, label, get, set)
 end
 
 -- Movable dialog with a title bar and close button; closes on Escape.
-function W.Window(globalName, width, height, title)
+function W.Window(globalName, width, height, title, onMove)
     local frame = CreateFrame("Frame", globalName, UIParent, "BackdropTemplate")
     frame:SetSize(width, height)
     frame:SetPoint("CENTER")
@@ -252,7 +302,15 @@ function W.Window(globalName, width, height, title)
     bar:EnableMouse(true)
     bar:RegisterForDrag("LeftButton")
     bar:SetScript("OnDragStart", function() frame:StartMoving() end)
-    bar:SetScript("OnDragStop", function() frame:StopMovingOrSizing() end)
+    bar:SetScript("OnDragStop", function()
+        frame:StopMovingOrSizing()
+        if onMove then
+            local point, _, relPoint, x, y = frame:GetPoint()
+            if point and x and y then
+                onMove(point, relPoint or point, x, y)
+            end
+        end
+    end)
     local divider = W.Line(frame, Theme.border)
     divider:SetPoint("TOPLEFT", bar, "BOTTOMLEFT")
     divider:SetPoint("TOPRIGHT", bar, "BOTTOMRIGHT")
@@ -272,14 +330,14 @@ function W.Window(globalName, width, height, title)
     return frame
 end
 
--- One-line text box with a grey placeholder; onChange(text) on every edit.
--- Escape or Enter drops focus.
+-- One-line text box with a grey placeholder and clear button; onChange(text)
+-- on every edit. Escape or Enter drops focus.
 function W.SearchBox(parent, width, placeholder, onChange)
     local box = CreateFrame("EditBox", nil, parent, "BackdropTemplate")
     box:SetSize(width, 24)
     W.Skin(box, { 0.02, 0.03, 0.04, 1 })
     box:SetAutoFocus(false)
-    box:SetTextInsets(8, 8, 0, 0)
+    box:SetTextInsets(8, 22, 0, 0)
     box:SetFont(Theme.font, 12, "")
     if not box:GetFont() then
         box:SetFont(STANDARD_TEXT_FONT, 12, "")
@@ -288,9 +346,24 @@ function W.SearchBox(parent, width, placeholder, onChange)
     local hint = W.Text(box, 12, Theme.muted)
     hint:SetPoint("LEFT", 8, 0)
     hint:SetText(placeholder)
+    local clear = CreateFrame("Button", nil, box)
+    clear:SetSize(16, 16)
+    clear:SetPoint("RIGHT", -4, 0)
+    clear.text = W.Text(clear, 11, Theme.muted, "CENTER")
+    clear.text:SetPoint("CENTER")
+    clear.text:SetText("x")
+    clear:Hide()
+    clear:SetScript("OnEnter", function(self) self.text:SetTextColor(unpack(Theme.text)) end)
+    clear:SetScript("OnLeave", function(self) self.text:SetTextColor(unpack(Theme.muted)) end)
+    clear:SetScript("OnClick", function()
+        box:SetText("")
+        box:ClearFocus()
+    end)
+    box.clear = clear
     box:SetScript("OnTextChanged", function(self)
         local text = self:GetText() or ""
         hint:SetShown(text == "")
+        clear:SetShown(text ~= "")
         onChange(text)
     end)
     box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)

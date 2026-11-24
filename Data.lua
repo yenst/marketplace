@@ -92,10 +92,16 @@ function Data.Index(crafters, catalog, names)
             prof.crafters[crafter.key] = crafter
             for recipeID, cat in pairs(p.recipes or {}) do
                 local r = recipes[recipeID]
+                local c = p.categories and p.categories[cat]
                 if not r then
-                    local c = p.categories and p.categories[cat]
                     r = { id = recipeID, prof = profID, profName = prof.name, cat = cat, catName = c and c.name or "Other", crafters = {} }
                     recipes[recipeID] = r
+                elseif cat and cat ~= 0 and (r.cat == 0 or r.catName == "Other") then
+                    if c and c.name then
+                        r.cat, r.catName = cat, c.name
+                    elseif r.cat == 0 then
+                        r.cat = cat
+                    end
                 end
                 r.crafters[#r.crafters + 1] = crafter
             end
@@ -162,16 +168,6 @@ function Data.Tabs(gameList, professions)
     return list, byId
 end
 
--- Professions sorted by name, for the side tabs.
-function Data.ProfessionList(professions)
-    local list = {}
-    for _, p in pairs(professions) do
-        list[#list + 1] = p
-    end
-    table.sort(list, function(a, b) return a.name < b.name end)
-    return list
-end
-
 local function matches(recipe, meta, query, itemName)
     if query == "" then
         return true
@@ -208,8 +204,8 @@ Data.NOBODY = "Not in your guild"
 -- Returns items = { { header = true, label, count, collapsed } | { recipe, name, online, total } }
 -- and the number of matching recipes.
 function Data.List(recipes, filter, metaOf, itemName)
-    local query = (filter.query or ""):lower()
-    local groups, order, sortKey = {}, {}, {}
+    local query = (filter.query or ""):match("^%s*(.-)%s*$"):lower()
+    local groups, order, sortKey, collapsedCounts = {}, {}, {}, {}
     local count = 0
     for id, r in pairs(recipes) do
         local nobody = #r.crafters == 0
@@ -222,28 +218,40 @@ function Data.List(recipes, filter, metaOf, itemName)
                     on = on + 1
                 end
             end
-            local meta = (not filter.onlineOnly or on > 0) and (metaOf(id) or {})
-            if meta and matches(r, meta, query, itemName) then
+            if not filter.onlineOnly or on > 0 then
                 local favorite = filter.favorites and filter.favorites[id] or false
-                local key = favorite and Data.FAVORITES or (nobody and Data.NOBODY)
-                    or (filter.prof == "all" and r.profName or r.catName)
-                if not groups[key] then
-                    groups[key] = {}
-                    order[#order + 1] = key
-                    -- The game numbers a profession's categories in the order
-                    -- its window shows them; uncategorised recipes go last.
-                    -- Favourites come first in either view.
-                    if favorite then
-                        sortKey[key] = filter.prof == "all" and "" or -1
-                    elseif nobody then
-                        sortKey[key] = filter.prof == "all" and "\255" or 2 ^ 53
-                    else
-                        sortKey[key] = filter.prof == "all" and r.profName or (r.cat == 0 and 2 ^ 52 or r.cat)
+                if not favorite and nobody and query == "" and filter.collapsed and filter.collapsed[Data.NOBODY] then
+                    if not groups[Data.NOBODY] then
+                        groups[Data.NOBODY] = {}
+                        order[#order + 1] = Data.NOBODY
+                        sortKey[Data.NOBODY] = filter.prof == "all" and "\255" or 2 ^ 53
+                    end
+                    collapsedCounts[Data.NOBODY] = (collapsedCounts[Data.NOBODY] or 0) + 1
+                    count = count + 1
+                else
+                    local meta = metaOf(id) or {}
+                    if matches(r, meta, query, itemName) then
+                        local key = favorite and Data.FAVORITES or (nobody and Data.NOBODY)
+                            or (filter.prof == "all" and r.profName or r.catName)
+                        if not groups[key] then
+                            groups[key] = {}
+                            order[#order + 1] = key
+                            -- The game numbers a profession's categories in the order
+                            -- its window shows them; uncategorised recipes go last.
+                            -- Favourites come first in either view.
+                            if favorite then
+                                sortKey[key] = filter.prof == "all" and "" or -1
+                            elseif nobody then
+                                sortKey[key] = filter.prof == "all" and "\255" or 2 ^ 53
+                            else
+                                sortKey[key] = filter.prof == "all" and r.profName or (r.cat == 0 and 2 ^ 52 or r.cat)
+                            end
+                        end
+                        local list = groups[key]
+                        list[#list + 1] = { recipe = r, name = meta.name or ("Recipe " .. id), online = on, total = #r.crafters, favorite = favorite, skill = r.skill }
+                        count = count + 1
                     end
                 end
-                local list = groups[key]
-                list[#list + 1] = { recipe = r, name = meta.name or ("Recipe " .. id), online = on, total = #r.crafters, favorite = favorite, skill = r.skill }
-                count = count + 1
             end
         end
     end
@@ -256,19 +264,19 @@ function Data.List(recipes, filter, metaOf, itemName)
     local items = {}
     for _, key in ipairs(order) do
         local rows = groups[key]
-        if key == Data.NOBODY then
-            table.sort(rows, function(a, b)
-                if (a.skill or 0) ~= (b.skill or 0) then
-                    return (a.skill or 0) < (b.skill or 0)
-                end
-                return a.name < b.name
-            end)
-        else
-            table.sort(rows, function(a, b) return a.name < b.name end)
-        end
         local collapsed = filter.collapsed and filter.collapsed[key] or false
-        items[#items + 1] = { header = true, label = key, count = #rows, collapsed = collapsed, favorites = key == Data.FAVORITES }
+        items[#items + 1] = { header = true, label = key, count = collapsedCounts[key] or #rows, collapsed = collapsed, favorites = key == Data.FAVORITES }
         if not collapsed then
+            if key == Data.NOBODY then
+                table.sort(rows, function(a, b)
+                    if (a.skill or 0) ~= (b.skill or 0) then
+                        return (a.skill or 0) < (b.skill or 0)
+                    end
+                    return a.name < b.name
+                end)
+            else
+                table.sort(rows, function(a, b) return a.name < b.name end)
+            end
             for _, row in ipairs(rows) do
                 items[#items + 1] = row
             end

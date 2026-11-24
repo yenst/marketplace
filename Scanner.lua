@@ -7,6 +7,9 @@ local _, ns = ...
 -- so recipes guildmates share can be shown even if nobody here knows them.
 local Scanner = {}
 ns.Scanner = Scanner
+-- Session-only metadata cache (not saved to SavedVariables so patches and
+-- locale changes stay fresh and SavedVariables stay small).
+Scanner.Cache = {}
 
 -- Recipes that aren't something you'd ask a crafter for.
 local function skipped(info)
@@ -72,6 +75,8 @@ function Scanner.Collect(T)
                 name = info.name,
                 icon = info.icon,
                 item = schematic and schematic.outputItemID,
+                qtyMin = schematic and schematic.quantityMin,
+                qtyMax = schematic and schematic.quantityMax,
                 prof = profession.id,
                 cat = cat,
                 reagents = reagentsOf(schematic),
@@ -93,7 +98,7 @@ function Scanner.Store(char, profession, meta, now)
     profession.scannedAt = now
     char.professions = char.professions or {}
     char.professions[profession.id] = profession
-    local cache = ns.db.recipes
+    local cache = Scanner.Cache
     for id, m in pairs(meta) do
         cache[id] = m
     end
@@ -102,10 +107,10 @@ end
 
 local misses = {} -- recipe ID -> fallback meta or true, for lookups that failed
 
--- Recipe metadata for any recipe ID, from the cache or looked up and cached.
--- Forever answers these lookups without the profession window open.
+-- Recipe metadata for any recipe ID, from the session cache or looked up and
+-- cached. Forever answers these lookups without the profession window open.
 function Scanner.Meta(id)
-    local cache = ns.db.recipes
+    local cache = Scanner.Cache
     if cache[id] then
         return cache[id]
     end
@@ -128,6 +133,8 @@ function Scanner.Meta(id)
         name = info.name,
         icon = info.icon,
         item = schematic and schematic.outputItemID,
+        qtyMin = schematic and schematic.quantityMin,
+        qtyMax = schematic and schematic.quantityMax,
         cat = info.categoryID or 0,
         reagents = reagentsOf(schematic),
     }
@@ -191,27 +198,55 @@ local function learnedProfessions()
 end
 
 -- Forgets professions this character has since unlearned, so they stop
--- being shared. Only when the client's list agrees with at least one stored
--- profession (so a different ID scheme can't wipe them all).
+-- being shared. Only when the client's list uses the same skill-line ID
+-- scheme (at least one learned ID matches a stored or known profession), so
+-- a different ID scheme can't wipe them all.
 function Scanner.DropUnlearned(char, learned)
     learned = learned or learnedProfessions()
     if not (char and char.professions and learned) then
-        return
+        return false
     end
     local agrees = false
-    for id in pairs(char.professions) do
-        if learned[id] then
+    for id in pairs(learned) do
+        if char.professions[id] or (ns.RecipeDB and ns.RecipeDB[id]) or (ns.Data and ns.Data.GATHERING and ns.Data.GATHERING[id]) then
             agrees = true
+            break
         end
     end
     if not agrees then
-        return
+        return false
     end
+    local dropped = false
     for id in pairs(char.professions) do
         if not learned[id] then
             char.professions[id] = nil
+            dropped = true
         end
     end
+    return dropped
+end
+
+-- Fast skill-only update (for SKILL_LINES_CHANGED): updates skill/maxSkill
+-- on existing professions without querying every unlearned catalog recipe.
+-- Returns changed, needsFullScan (true when a new catalog profession appeared).
+function Scanner.SyncSkills(char, infos, catalog)
+    if not (char and infos) then
+        return false, false
+    end
+    char.professions = char.professions or {}
+    local changed, needsFull = false, false
+    for id, info in pairs(infos) do
+        local p = char.professions[id]
+        if p then
+            if p.skill ~= info.skill or p.maxSkill ~= info.maxSkill then
+                p.skill, p.maxSkill = info.skill, info.maxSkill
+                changed = true
+            end
+        elseif catalog and catalog[id] then
+            needsFull = true
+        end
+    end
+    return changed, needsFull
 end
 
 -- Without the profession window: for each profession the character has,
@@ -270,21 +305,42 @@ end
 
 -- Quiet scan now, sharing what changed (after logging in, learning a
 -- recipe or a skill change); bursts of events run it once.
-local quietPending = false
-function Scanner.QuietQueue(delay)
+-- skillsOnly: skip querying unlearned recipes unless a new profession appeared.
+local quietPending, quietFull = false, false
+function Scanner.QuietQueue(delay, skillsOnly)
+    if not skillsOnly then
+        quietFull = true
+    end
     if quietPending then
         return
     end
     quietPending = true
     C_Timer.After(delay or 2, function()
-        quietPending = false
+        local full = quietFull
+        quietPending, quietFull = false, false
         if not ns.char then
             return
         end
-        Scanner.DropUnlearned(ns.char)
-        if Scanner.QuietScan(ns.char, professionInfos(), C_TradeSkillUI, ns.RecipeDB, time()) then
+        local infos = professionInfos()
+        local dropped = Scanner.DropUnlearned(ns.char)
+        local changed = dropped
+        if full then
+            if Scanner.QuietScan(ns.char, infos, C_TradeSkillUI, ns.RecipeDB, ns.Now()) then
+                changed = true
+            end
+        else
+            local skillChanged, needsFull = Scanner.SyncSkills(ns.char, infos, ns.RecipeDB)
+            if needsFull then
+                if Scanner.QuietScan(ns.char, infos, C_TradeSkillUI, ns.RecipeDB, ns.Now()) then
+                    changed = true
+                end
+            elseif skillChanged then
+                changed = true
+            end
+        end
+        if changed then
             if ns.db.settings.debug then
-                ns.Print("found learned recipes without the profession window")
+                ns.Print("updated professions without the profession window")
             end
             ns.Refresh()
             ns.Sync.Announce()
@@ -314,7 +370,7 @@ function Scanner.Queue()
             return
         end
         local profession, meta = Scanner.Collect(C_TradeSkillUI)
-        local stored = Scanner.Store(ns.char, profession, meta, time())
+        local stored = Scanner.Store(ns.char, profession, meta, ns.Now())
         if stored then
             if ns.db.settings.debug then
                 ns.Print(string.format("scanned %s: %d recipes", stored.name, Scanner.Count(stored)))

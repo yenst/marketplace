@@ -11,11 +11,9 @@ local Theme = {
     hairline = { 1, 1, 1, 0.06 },
     text = { 0.92, 0.93, 0.95, 1 },
     muted = { 0.55, 0.58, 0.63, 1 },
-    accent = { 0.55, 0.49, 0.96, 1 }, -- placeholder violet; picked in the UI pass
-    warn = { 1, 0.71, 0.25, 1 },
+    accent = { 0.55, 0.49, 0.96, 1 },
     bad = { 1, 0.36, 0.36, 1 },
     font = STANDARD_TEXT_FONT,
-    ellesmere = false,
 }
 ns.Theme = Theme
 
@@ -35,7 +33,6 @@ function Theme.Load()
     if not (loaded and type(eui) == "table") then
         return
     end
-    Theme.ellesmere = true
     local r, g, b = readColor(eui.ELLESMERE_GREEN)
     if r then
         Theme.accent = { r, g, b, 1 }
@@ -53,7 +50,10 @@ function Theme.Load()
 end
 
 function Theme.Hex(color)
-    return string.format("|cff%02x%02x%02x", color[1] * 255, color[2] * 255, color[3] * 255)
+    return string.format("|cff%02x%02x%02x",
+        math.floor(color[1] * 255 + 0.5),
+        math.floor(color[2] * 255 + 0.5),
+        math.floor(color[3] * 255 + 0.5))
 end
 
 -- Online / offline dots in crafter lists.

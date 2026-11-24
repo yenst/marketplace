@@ -1,7 +1,7 @@
 local ADDON, ns = ...
 
 local DEFAULT_SETTINGS = {
-    minimapButton = true,
+    tooltips = true,
 }
 
 local function initDB()
@@ -18,11 +18,10 @@ local function initDB()
     db.chars = db.chars or {}
     -- What guildmates shared, by guild name, then "Name-Realm".
     db.guilds = db.guilds or {}
-    -- Recipe metadata by recipe ID: { name, icon, item, prof, cat, reagents }.
-    db.recipes = db.recipes or {}
     -- Favourite recipes (account-wide): { [recipeID] = true }.
     db.favorites = db.favorites or {}
-    db.public = nil -- public listings were dropped; clear what an earlier build saved
+    db.recipes = nil -- recipe metadata is now session-only; clear old saved cache
+    db.public = nil  -- public listings were dropped; clear what an earlier build saved
     ns.db = db
 end
 
@@ -111,14 +110,35 @@ function handlers.ADDON_LOADED(name)
     end
 end
 
+-- Which guild this character is in, so its alts' recipes show in that guild.
+-- Don't wipe a saved guild name while IsInGuild() is true and GetGuildInfo()
+-- hasn't populated yet right after login.
+local function noteGuild()
+    if not ns.char then
+        return
+    end
+    if not IsInGuild() then
+        ns.char.guild = nil
+    else
+        local guild = GetGuildInfo("player")
+        if guild and guild ~= "" then
+            ns.char.guild = guild
+        end
+    end
+end
+
 function handlers.PLAYER_LOGIN()
     loadCharacter()
     fixRealm()
+    noteGuild()
     ns.Theme.Load()
+    if ns.Minimap then ns.Minimap.Init() end
+    if ns.GuildTab then ns.GuildTab.Init() end
     C_Timer.After(5, fixRealm)
     ns.Sync.RequestRoster()
     -- Give the guild roster and realm name a moment before saying hello.
     C_Timer.After(10, function()
+        noteGuild()
         helloReady = true
         ns.Sync.EnsureHello()
         ns.Scanner.QuietQueue(0) -- share professions without opening their windows
@@ -133,27 +153,28 @@ function handlers.PLAYER_ENTERING_WORLD()
     fixRealm()
 end
 
--- Which guild this character is in, so its alts' recipes show in that guild.
-local function noteGuild()
-    if ns.char then
-        ns.char.guild = IsInGuild() and GetGuildInfo("player") or nil
-    end
-end
-
 function handlers.PLAYER_GUILD_UPDATE()
     noteGuild()
+    if ns.GuildTab then ns.GuildTab.Update() end
     if helloReady then
         ns.Sync.EnsureHello() -- joined a guild mid-session
     end
     ns.Refresh()
 end
 
+local rosterPending = false
 function handlers.GUILD_ROSTER_UPDATE()
     noteGuild()
     if helloReady then
         ns.Sync.EnsureHello()
     end
-    ns.Window.Refresh()
+    if not rosterPending then
+        rosterPending = true
+        C_Timer.After(0.5, function()
+            rosterPending = false
+            ns.Window.Refresh()
+        end)
+    end
 end
 
 -- Quest titles (recipe sources) load on demand.
@@ -169,13 +190,19 @@ function handlers.GET_ITEM_INFO_RECEIVED()
     ns.Window.ItemDataArrived()
 end
 
--- A recipe or skill learned: pick it up without the profession window.
+-- A recipe learned: scan catalog for newly learned recipes without the window.
+-- A skill change alone only checks skill/maxSkill (unless a new profession appeared).
 function handlers.NEW_RECIPE_LEARNED()
     if helloReady then
-        ns.Scanner.QuietQueue()
+        ns.Scanner.QuietQueue(2, false)
     end
 end
-handlers.SKILL_LINES_CHANGED = handlers.NEW_RECIPE_LEARNED
+
+function handlers.SKILL_LINES_CHANGED()
+    if helloReady then
+        ns.Scanner.QuietQueue(2, true)
+    end
+end
 
 handlers.TRADE_SKILL_SHOW = function() ns.Scanner.Queue() end
 handlers.TRADE_SKILL_LIST_UPDATE = handlers.TRADE_SKILL_SHOW
@@ -194,8 +221,9 @@ local HELP = {
     "/marketplace (or /mkt) - open the browser",
     "/mkt status - what Marketplace knows about this character's professions",
     "/mkt guild - guildmates' professions received so far",
-    "/mkt debug - show / hide guild sync activity in chat",
+    "/mkt tooltips - show / hide guild crafters on item and pattern tooltips",
     "/mkt minimap - show / hide the minimap button",
+    "/mkt debug - show / hide guild sync activity in chat",
     "/mkt probe - check which profession and messaging APIs this client has",
     "/mkt probe trade - with a profession window open, save its recipe data for development",
 }
@@ -207,6 +235,10 @@ local COMMANDS = {
         for _, line in ipairs(ns.Sync.Report()) do
             ns.Print(line)
         end
+    end,
+    tooltips = function()
+        ns.db.settings.tooltips = not ns.db.settings.tooltips
+        ns.Print("Item tooltips " .. (ns.db.settings.tooltips and "on" or "off") .. ".")
     end,
     minimap = function() ns.ToggleMinimapButton() end,
     debug = function()
