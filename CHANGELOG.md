@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.9
+
+- Internal cleanup and refactoring across the browser window, recipe data model, scanner, sync decoder, and UI helpers for improved readability and maintainability (no functional changes).
+
 ## 0.1.8
 
 - Window: remembers its position between sessions, adds scrollbars to the recipe list and member dropdown, adds a clear button to the search box, closes the member dropdown when clicking outside, and clears the details pane when no recipes match.
