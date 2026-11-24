@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.10
+
+- Fixed characters sharing the same first name on WoW Forever inheriting and syncing each other's professions and skill levels: saved characters are now keyed by `UnitGUID("player")` instead of first name, with verified migration of pre-existing entries.
+- Guild sync now clears stale copies of characters with no professions when reconciling bucket lists, and scans professions before sending the login hello.
+- Avoided first-name collisions in `Data.Crafters` when own characters lack a full name or multiple guildmates share the same first name.
+
 ## 0.1.9
 
 - Internal cleanup and refactoring across the browser window, recipe data model, scanner, sync decoder, and UI helpers for improved readability and maintainability (no functional changes).
