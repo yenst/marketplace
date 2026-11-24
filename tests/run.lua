@@ -328,6 +328,38 @@ test("Data.Crafters: someone who logged off isn't online, even if seen", functio
     end
 end)
 
+test("Data.Crafters: same first name never merges partial own alts or hides ambiguous guildmates", function()
+    local c = {
+        own = {
+            { key = "Player-1-A", name = "Allonsj", class = "PALADIN", partial = true, current = true,
+              professions = { [164] = { name = "Blacksmithing", skill = 100, recipes = { [1] = 10 } } } },
+            { key = "Player-1-B", name = "Allonsj", class = "MAGE", partial = true,
+              professions = { [164] = { name = "Blacksmithing", skill = 250, recipes = { [1] = 10, [2] = 10 } } } },
+        },
+        guildData = {
+            ["Allonsj Alpha"] = { updated = 100, professions = { [164] = { name = "Blacksmithing", skill = 150, recipes = { [1] = 10 } } } },
+            ["Allonsj Beta"] = { updated = 100, professions = { [164] = { name = "Blacksmithing", skill = 300, recipes = { [1] = 10 } } } },
+            ["Allonsj Gamma"] = { updated = 100, professions = { [164] = { name = "Blacksmithing", skill = 250, recipes = { [1] = 10 } } } },
+        },
+        roster = {
+            ["Allonsj Alpha"] = { online = true, class = "PALADIN" },
+            ["Allonsj Beta"] = { online = true, class = "PALADIN" },
+            ["Allonsj Gamma"] = { online = false, class = "MAGE" },
+        },
+    }
+    local crafters = ns.Data.Crafters(c)
+    local byKey = {}
+    for _, cr in ipairs(crafters) do byKey[cr.key] = cr end
+    assert(byKey["Player-1-A"] and byKey["Player-1-B"], "both partial same-first-name own alts kept with distinct keys")
+    eq(byKey["Player-1-A"].professions[164].skill, 100)
+    eq(byKey["Player-1-B"].professions[164].skill, 250)
+    assert(byKey["Allonsj Alpha"] and byKey["Allonsj Beta"], "ambiguous same-first-name/same-class guildmates are not hidden")
+    eq(byKey["Allonsj Gamma"], nil, "unambiguous single class match is suppressed as own partial character")
+    local recipes = ns.Data.Index(crafters)
+    local members = ns.Data.Members(recipes, 164)
+    eq(#members, 4, "all 4 distinct crafters appear in Members with their own skills")
+end)
+
 local META = { [1] = { name = "Arcanite Reaper", reagents = { { 500, 12 } } }, [2] = { name = "Lionheart Helm" }, [3] = { name = "Imperial Plate" }, [7] = { name = "Chili" } }
 local function metaOf(id) return META[id] end
 local function itemName(id) return id == 500 and "Arcanite Bar" or nil end

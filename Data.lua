@@ -31,8 +31,62 @@ local function ownState(c, rosterEntry)
     return "offline"
 end
 
+local function findUnambiguousMatch(pool, cls, skipPartial)
+    local matched
+    for _, cand in ipairs(pool) do
+        local classOk = cls == true or not cand.class or cand.class == cls
+        if not skipPartial[cand.short] and classOk then
+            if matched then
+                return nil -- ambiguous: multiple guildmates share this first name
+            end
+            matched = cand.short
+        end
+    end
+    return matched
+end
+
+-- Only suppress a synced guildmate for a partial own character when the
+-- first-name + class match is unambiguous (never hide other people who
+-- share the same first name).
+local function buildPartialSkips(partial, guildData, roster, taken)
+    local candidates = {}
+    for sender, entry in pairs(guildData or {}) do
+        local short = Data.ShortName(sender)
+        local first = short:match("^(%S+) ")
+        if first and partial[first] and not taken[short] and next(entry.professions or {}) then
+            local r = (roster or {})[short]
+            candidates[first] = candidates[first] or {}
+            candidates[first][#candidates[first] + 1] = { short = short, class = r and r.class }
+        end
+    end
+    local skipPartial = {}
+    for first, classes in pairs(partial) do
+        local pool = candidates[first] or {}
+        for _, cls in ipairs(classes) do
+            local matched = findUnambiguousMatch(pool, cls, skipPartial)
+            if matched then
+                skipPartial[matched] = true
+            end
+        end
+    end
+    return skipPartial
+end
+
+local function guildCrafterState(sender, rosterEntry, seen)
+    if rosterEntry and not rosterEntry.online then
+        return "offline" -- logged off since we last heard from them
+    end
+    if (seen or {})[sender] then
+        return "addon"
+    end
+    if rosterEntry and rosterEntry.online then
+        return "noaddon"
+    end
+    return "offline"
+end
+
 -- ctx = {
---   own = { { name, class, professions, current = bool }, ... }   your characters in this guild
+--   own = { { key, name, class, professions, current = bool, partial = bool }, ... }
 --   guildData = { [sender] = { professions, updated } }            synced guildmates
 --   roster = { [shortName] = { online, class, lastOnline } }       guild roster
 --   seen = { [sender] = time }                                     running the addon this session
@@ -40,40 +94,34 @@ end
 -- }
 -- Own characters may lack the full name others see them by ("Billy" for
 -- "Billy Joel", own = { …, partial = true }); a synced entry whose first
--- name and class match one of those is that character, so it's skipped.
+-- name and class unambiguously match one of those is skipped.
 -- Returns { { key, name, class, state, lastOnline, updated, professions, mine } }.
 function Data.Crafters(ctx)
     local list, taken, partial = {}, {}, {}
     for _, c in ipairs(ctx.own or {}) do
-        if c.partial then
-            partial[c.name] = c.class or true
-        end
         local short = Data.ShortName(c.name)
+        local key = c.key or (taken[short] and (short .. "#" .. (#list + 1)) or short)
+        if c.partial then
+            partial[short] = partial[short] or {}
+            partial[short][#partial[short] + 1] = c.class or true
+        end
         local r = (ctx.roster or {})[short]
         list[#list + 1] = {
-            key = short, name = short, class = c.class, mine = true, professions = c.professions or {},
+            key = key, name = short, class = c.class, mine = true, professions = c.professions or {},
             state = ownState(c, r),
             lastOnline = r and r.lastOnline,
         }
         taken[short] = true
     end
+    local skipPartial = buildPartialSkips(partial, ctx.guildData, ctx.roster, taken)
     for sender, entry in pairs(ctx.guildData or {}) do
         local short = Data.ShortName(sender)
         local r = (ctx.roster or {})[short]
-        local first = short:match("^(%S+) ")
-        local mineToo = first and partial[first] and (partial[first] == true or not r or r.class == partial[first])
         local left = ctx.trustRoster and not r and not (ctx.seen or {})[sender]
-        if not taken[short] and not mineToo and not left and next(entry.professions or {}) then
-            local state = "offline"
-            if r and not r.online then
-                state = "offline" -- logged off since we last heard from them
-            elseif (ctx.seen or {})[sender] then
-                state = "addon"
-            elseif r and r.online then
-                state = "noaddon"
-            end
+        if not taken[short] and not skipPartial[short] and not left and next(entry.professions or {}) then
             list[#list + 1] = {
-                key = short, name = short, class = r and r.class, state = state,
+                key = short, name = short, class = r and r.class,
+                state = guildCrafterState(sender, r, ctx.seen),
                 lastOnline = r and r.lastOnline, updated = entry.updated,
                 professions = entry.professions or {},
             }

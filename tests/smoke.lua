@@ -735,6 +735,99 @@ ns.Sync.EnsureHello()
 assert(next(ns.Sync.seen) == nil, "guild switch resets Sync.seen")
 GetGuildInfo = function() return "Test Guild" end
 
+-- Same first name on WoW Forever: characters are keyed by UnitGUID("player"),
+-- so two alts sharing a first name ("Allonsj Alpha" and "Allonsj Beta") never
+-- share one saved entry or broadcast each other's skills/recipes.
+do
+    local oldUnitName, oldUnitGUID, oldUnitClass = UnitName, UnitGUID, UnitClass
+    local oldGetProfs, oldGetProfInfo = GetProfessions, GetProfessionInfo
+    local oldTrade = C_TradeSkillUI
+    local oldAfter = C_Timer.After
+    local oldNum, oldInfo = GetNumGuildMembers, GetGuildRosterInfo
+
+    UnitName = function() return "Allonsj" end
+    UnitClass = function() return "Paladin", "PALADIN", 2 end
+    GetProfessions = function() return 1 end
+    GetProfessionInfo = function() return "Blacksmithing", 0, 215, 300, 0, 0, 164 end
+    C_TradeSkillUI = {
+        GetRecipeInfo = function(id)
+            return { recipeID = id, name = "R" .. id, categoryID = 7, learned = id == 2665 }
+        end,
+        GetCategoryInfo = function() return { name = "Weapons", parentCategoryID = 0 } end,
+    }
+    MarketplaceDB.chars["Allonsj-Mirage"] = {
+        name = "Allonsj", realm = "Mirage", class = "PALADIN", fullName = "Allonsj Alpha",
+        guild = "Test Guild", shareStamp = 500,
+        professions = {
+            [164] = {
+                id = 164, name = "Blacksmithing", skill = 215, maxSkill = 300, scannedAt = 500,
+                recipes = { [2665] = 7, [99999] = 7 },
+                categories = { [7] = { name = "Weapons", parent = 0 } },
+            },
+        },
+    }
+
+    -- Log in as Allonsj Beta (different GUID, same first name, 0 professions).
+    UnitGUID = function() return "Player-1-BETA" end
+    UnitClass = function() return "Mage", "MAGE", 8 end
+    GetProfessions = function() return nil end
+    GetNumGuildMembers = function() return 2 end
+    GetGuildRosterInfo = function(i)
+        if i == 1 then return "Allonsj Alpha-Mirage", "", 0, 60, "Paladin", "", "", "", false, 0, "PALADIN", 0, 0, false, false, 0, "Player-1-ALPHA" end
+        return "Allonsj Beta-Mirage", "", 0, 10, "Mage", "", "", "", true, 0, "MAGE", 0, 0, false, false, 0, "Player-1-BETA"
+    end
+    ns.Sync.selfName = nil
+    ns.Sync.helloGuild = nil
+    C_Timer.After = function(_, fn) fn() end
+    fire("PLAYER_LOGIN")
+    local beta = MarketplaceDB.chars["Player-1-BETA"]
+    assert(beta and beta.rosterName == "Allonsj Beta", "Beta learns full roster name via GUID")
+    assert(next(beta.professions) == nil, "Beta does NOT inherit Alpha's professions from legacy Allonsj-Mirage")
+    assert(MarketplaceDB.chars["Allonsj-Mirage"], "legacy entry for Alpha left intact when Beta logs in")
+
+    -- If the guild still holds a stale/poisoned copy of Allonsj Beta, Beta
+    -- reconciles by sending an empty copy with a higher stamp to clear it.
+    ns.Sync.LearnSelf("Allonsj Beta")
+    out = {}
+    local betaBucket = ns.Sync.BucketOf("Allonsj Beta")
+    local staleStamp = time() + 50
+    addon("L:2:Allonsj Beta:" .. betaBucket .. ":0:Allonsj Beta=deadbeef=" .. staleStamp, "GUILD", "Dan-Mirage")
+    assert(sent("^B:2:" .. ns.Sync.Hash({}) .. ":" .. (staleStamp + 1) .. ":$"), "Beta clears poisoned guild copy with empty broadcast")
+
+    -- Boundary check: a prefix-matching name ("Al") must not steal "Allonsj"'s hello echo.
+    UnitName = function() return "Al" end
+    ns.Sync.selfName = nil
+    addon("H:2:deadbeef:" .. ns.Sync.code .. ":" .. ("0"):rep(64), "GUILD", "Allonsj Beta")
+    assert(ns.Sync.selfName == nil, "hello echo requires word/realm boundary after first name")
+    UnitName = function() return "Allonsj" end
+
+    -- Now log in as Allonsj Alpha (GUID Player-1-ALPHA, PALADIN, Blacksmithing 215):
+    -- migrates legacy Allonsj-Mirage safely, dropping unlearned recipes.
+    UnitGUID = function() return "Player-1-ALPHA" end
+    UnitClass = function() return "Paladin", "PALADIN", 2 end
+    GetProfessions = function() return 1 end
+    ns.Sync.selfName = nil
+    ns.Sync.helloGuild = nil
+    fire("PLAYER_LOGIN")
+    local alpha = MarketplaceDB.chars["Player-1-ALPHA"]
+    assert(alpha and alpha.professions[164], "Alpha migrates its verified Blacksmithing profession")
+    assert(alpha.professions[164].recipes[2665] == 7, "learned recipe kept")
+    assert(alpha.professions[164].recipes[99999] == nil, "unlearned recipe dropped during legacy migration")
+    assert(MarketplaceDB.chars["Allonsj-Mirage"] == nil, "legacy Allonsj-Mirage cleaned up after migration")
+    assert(MarketplaceDB.chars["Player-1-BETA"] and next(MarketplaceDB.chars["Player-1-BETA"].professions) == nil,
+        "Beta remains completely separate from Alpha")
+
+    MarketplaceDB.chars["Player-1-ALPHA"] = nil
+    MarketplaceDB.chars["Player-1-BETA"] = nil
+    UnitName, UnitGUID, UnitClass = oldUnitName, oldUnitGUID, oldUnitClass
+    GetProfessions, GetProfessionInfo = oldGetProfs, oldGetProfInfo
+    C_TradeSkillUI = oldTrade
+    C_Timer.After = oldAfter
+    GetNumGuildMembers, GetGuildRosterInfo = oldNum, oldInfo
+    ns.char = MarketplaceDB.chars["Tester-Mirage"]
+    ns.Sync.selfName = "Tester Joel"
+end
+
 -- The Guild & Communities window (loaded on demand) gets a Marketplace tab.
 CommunitiesFrame = CreateFrame("Frame", "CommunitiesFrame")
 CommunitiesFrame.GuildInfoTab = CreateFrame("CheckButton")

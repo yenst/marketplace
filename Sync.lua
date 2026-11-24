@@ -462,8 +462,11 @@ function Sync.IsMe(sender)
     if Sync.selfName then
         return sender == Sync.selfName
     end
-    if ns.char and ns.char.fullName and sender == ns.char.fullName then
-        return true
+    if ns.char and ns.char.fullName then
+        return sender == ns.char.fullName
+    end
+    if ns.char and ns.char.rosterName then
+        return shortName(sender) == ns.char.rosterName
     end
     local name, realm = UnitName("player"), GetNormalizedRealmName and GetNormalizedRealmName()
     if realm and realm ~= "" then
@@ -486,6 +489,9 @@ function Sync.LearnSelf(sender)
     end
     if ns.char then
         ns.char.fullName = sender
+    end
+    if ns.AdoptLegacy then
+        ns.AdoptLegacy(sender)
     end
     local data = Sync.GuildData()
     if data then
@@ -895,8 +901,9 @@ local function reconcile(list, bucket)
     local state = myState(roster)
     local key = selfKey()
     local listed, mine = key and list[key], key and state[key]
-    if mine and listed and listed.hash ~= mine.hash then
-        if listed.stamp >= ns.char.shareStamp then
+    local myHash = Sync.MyHash()
+    if listed and listed.hash ~= myHash then
+        if listed.stamp >= ownStamp() then
             ns.char.shareStamp = listed.stamp + 1 -- a copy of us that looks newer than us
         end
         scheduleOwn(false)
@@ -1130,7 +1137,8 @@ function Sync.OnMessage(prefix, text, channel, sender)
     end
     local code = text:match("^H:%d+:%x+:(%x+):")
     local me = UnitName("player") or ""
-    if code and code == Sync.code and sender:sub(1, #me) == me then
+    local sep = me ~= "" and sender:sub(#me + 1, #me + 1) or ""
+    if code and code == Sync.code and me ~= "" and sender:sub(1, #me) == me and (sep == "" or sep == " " or sep == "-") then
         Sync.LearnSelf(sender)
         return
     end

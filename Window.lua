@@ -186,12 +186,17 @@ local function readRoster()
     if not IsInGuild() or not GetNumGuildMembers then
         return roster, 0
     end
+    local myGuid = UnitGUID and UnitGUID("player")
     for i = 1, GetNumGuildMembers() do
-        local name, _, _, _, _, _, _, _, isOnline, _, classFile = GetGuildRosterInfo(i)
+        local name, _, _, _, _, _, _, _, isOnline, _, classFile, _, _, _, _, _, guid = GetGuildRosterInfo(i)
         if name then
             size = size + 1
+            local short = Data.ShortName(name)
+            if myGuid and guid and guid == myGuid and ns.char and not ns.char.rosterName then
+                ns.char.rosterName = short
+            end
             local ago = not isOnline and rosterLastOnline(i) or nil
-            roster[Data.ShortName(name)] = { online = isOnline, class = classFile, lastOnline = ago }
+            roster[short] = { online = isOnline, class = classFile, lastOnline = ago }
         end
     end
     return roster, size
@@ -200,9 +205,10 @@ end
 local function gather()
     local guild = IsInGuild() and GetGuildInfo("player") or nil
     local own = {}
-    for _, c in pairs(ns.db.chars) do
+    for k, c in pairs(ns.db.chars) do
         if c == ns.char or (guild and c.guild == guild) then
-            own[#own + 1] = { name = c.fullName or c.name, class = c.class, professions = c.professions, current = c == ns.char, partial = not c.fullName }
+            local full = c.fullName or c.rosterName
+            own[#own + 1] = { key = not full and k or nil, name = full or c.name, class = c.class, professions = c.professions, current = c == ns.char, partial = not full }
         end
     end
     local roster, size = readRoster()

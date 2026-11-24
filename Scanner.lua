@@ -316,14 +316,11 @@ function Scanner.QuietScan(char, infos, T, catalog, now)
     return changed
 end
 
--- Quiet scan now, sharing what changed (after logging in, learning a
--- recipe or a skill change); bursts of events run it once.
--- skillsOnly: skip querying unlearned recipes unless a new profession appeared.
-local quietPending, quietFull = false, false
-
-local function runQuietScan(full)
+-- Runs a quiet scan right now and returns whether anything changed.
+-- full: also scan unlearned catalog recipes; false checks skills/new profs only.
+function Scanner.QuietRun(full)
     if not ns.char then
-        return
+        return false
     end
     local infos = professionInfos()
     local changed = Scanner.DropUnlearned(ns.char)
@@ -336,7 +333,16 @@ local function runQuietScan(full)
     if needsFull and Scanner.QuietScan(ns.char, infos, C_TradeSkillUI, ns.RecipeDB, ns.Now()) then
         changed = true
     end
-    if not changed then
+    return changed
+end
+
+-- Quiet scan now, sharing what changed (after logging in, learning a
+-- recipe or a skill change); bursts of events run it once.
+-- skillsOnly: skip querying unlearned recipes unless a new profession appeared.
+local quietPending, quietFull = false, false
+
+local function runQuietScan(full)
+    if not Scanner.QuietRun(full) then
         return
     end
     if ns.db.settings.debug then

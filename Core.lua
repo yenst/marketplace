@@ -28,11 +28,15 @@ local function initDB()
 end
 
 -- GetRealmName() can come back empty at login (seen on WoW Forever, see
--- planTo60). Fall back to the realm this name was last seen on.
-local function realmFor(name)
+-- planTo60). Fall back to the realm this character (or name) was last seen on.
+local function realmFor(name, guid)
     local realm = GetRealmName()
     if realm and realm ~= "" then
         return realm
+    end
+    local existing = guid and guid ~= "" and ns.db.chars[guid]
+    if existing and existing.realm and existing.realm ~= "" then
+        return existing.realm
     end
     local best
     for _, c in pairs(ns.db.chars) do
@@ -45,18 +49,118 @@ end
 
 local function loadCharacter()
     local name = UnitName("player")
-    local realm = realmFor(name)
-    local key = name .. "-" .. realm
+    local guid = UnitGUID and UnitGUID("player")
+    local hasGuid = guid and guid ~= ""
+    local realm = realmFor(name, guid)
+    -- Key by GUID when available: on WoW Forever UnitName("player") returns
+    -- only the first name, so two characters with the same first name would
+    -- otherwise share one saved entry and broadcast each other's skills.
+    local key = hasGuid and guid or (name .. "-" .. realm)
     local c = ns.db.chars[key] or { professions = {} }
     ns.db.chars[key] = c
+    c.guid = hasGuid and guid or nil
     c.name, c.realm = name, realm
     c.class = select(2, UnitClass("player"))
     c.lastSeen = time()
     ns.char = c
 end
 
--- Once the realm is known, moves a character saved as "Name-" (blank realm
--- at login) to "Name-Realm". Scans in either entry are kept, newest first.
+local function copyCategories(categories, cat, dest)
+    local cid = cat
+    while cid and cid ~= 0 and categories and categories[cid] and not dest[cid] do
+        dest[cid] = categories[cid]
+        cid = categories[cid].parent
+    end
+end
+
+-- Filters a legacy profession record against the current character's live
+-- professions and learned recipes so a same-first-name alt's skills/recipes
+-- can never leak during pre-GUID migration.
+local function verifiedProfession(p, cur)
+    if not cur or (p.skill or 0) > (cur.skill or 0) or (p.maxSkill or 0) > (cur.maxSkill or 0) then
+        return nil
+    end
+    local getInfo = C_TradeSkillUI and C_TradeSkillUI.GetRecipeInfo
+    local recipes, cats = {}, {}
+    for recipeID, cat in pairs(p.recipes or {}) do
+        local r = getInfo and getInfo(recipeID)
+        if not r or r.learned then
+            recipes[recipeID] = cat
+            copyCategories(p.categories, cat, cats)
+        end
+    end
+    if not next(recipes) then
+        return nil
+    end
+    return {
+        id = p.id, name = p.name or cur.name,
+        skill = cur.skill, maxSkill = cur.maxSkill,
+        scannedAt = p.scannedAt, recipes = recipes, categories = cats,
+    }
+end
+
+local function mergeVerifiedProfession(char, id, verified)
+    local existing = char.professions[id]
+    if not existing then
+        char.professions[id] = verified
+        return
+    end
+    for recipeID, cat in pairs(verified.recipes) do
+        if not existing.recipes[recipeID] then
+            existing.recipes[recipeID] = cat
+        end
+    end
+    existing.categories = existing.categories or {}
+    for cid, catInfo in pairs(verified.categories) do
+        if not existing.categories[cid] then
+            existing.categories[cid] = catInfo
+        end
+    end
+end
+
+local function isLegacyMatch(old, c, shortFull)
+    if old.fullName then
+        return shortFull ~= nil and ns.Data.ShortName(old.fullName) == shortFull
+    end
+    local sameRealm = old.realm == c.realm or old.realm == "" or c.realm == ""
+    return old.name == c.name and old.class == c.class and sameRealm
+end
+
+-- Migrates a pre-GUID entry ("Name-Realm" or "Name-") into the current
+-- GUID-keyed character once we know our full name, without letting two
+-- characters who share a first name inherit each other's professions.
+function ns.AdoptLegacy(fullName)
+    local c = ns.char
+    if not (c and c.guid) then
+        return
+    end
+    local shortFull = fullName and fullName ~= "" and ns.Data.ShortName(fullName) or nil
+    local infos = ns.Scanner.ProfessionInfos and ns.Scanner.ProfessionInfos()
+    local toDelete = {}
+    for k, old in pairs(ns.db.chars) do
+        if k ~= c.guid and not old.guid and isLegacyMatch(old, c, shortFull) then
+            if old.shareStamp and (not c.shareStamp or old.shareStamp > c.shareStamp) then
+                c.shareStamp = old.shareStamp
+            end
+            if old.class == c.class and infos then
+                c.professions = c.professions or {}
+                for id, p in pairs(old.professions or {}) do
+                    local verified = verifiedProfession(p, infos[id])
+                    if verified then
+                        mergeVerifiedProfession(c, id, verified)
+                    end
+                end
+            end
+            toDelete[#toDelete + 1] = k
+        end
+    end
+    for _, k in ipairs(toDelete) do
+        ns.db.chars[k] = nil
+    end
+end
+
+-- Once the realm is known, updates a character saved with a blank realm at
+-- login (and moves "Name-" to "Name-Realm" when not keyed by GUID).
 local function fixRealm()
     local c = ns.char
     if not c or (c.realm and c.realm ~= "") then
@@ -64,6 +168,10 @@ local function fixRealm()
     end
     local realm = GetRealmName()
     if not realm or realm == "" then
+        return
+    end
+    if c.guid then
+        c.realm = realm
         return
     end
     local strayKey, key = c.name .. "-", c.name .. "-" .. realm
@@ -129,10 +237,29 @@ local function noteGuild()
     end
 end
 
+-- Learn our full roster name right away by matching our GUID on the guild
+-- roster (so the UI shows our full name even before the login hello echoes).
+local function noteRosterSelf()
+    local c = ns.char
+    if not (c and c.guid and IsInGuild() and GetNumGuildMembers and GetGuildRosterInfo) then
+        return
+    end
+    for i = 1, GetNumGuildMembers() do
+        local name, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, guid = GetGuildRosterInfo(i)
+        if name and guid and guid == c.guid then
+            local short = ns.Data.ShortName(name)
+            c.rosterName = short
+            ns.AdoptLegacy(short)
+            return
+        end
+    end
+end
+
 function handlers.PLAYER_LOGIN()
     loadCharacter()
     fixRealm()
     noteGuild()
+    noteRosterSelf()
     ns.Theme.Load()
     if ns.Minimap then ns.Minimap.Init() end
     if ns.GuildTab then ns.GuildTab.Init() end
@@ -141,9 +268,24 @@ function handlers.PLAYER_LOGIN()
     -- Give the guild roster and realm name a moment before saying hello.
     C_Timer.After(10, function()
         noteGuild()
+        noteRosterSelf()
+        if not IsInGuild() then
+            ns.AdoptLegacy(nil)
+        end
+        -- Update professions/skills before sending the login hello so our
+        -- digest and any immediate sync never advertise stale data.
+        local changed = ns.Scanner.QuietRun(true)
+        if changed then
+            if ns.db.settings.debug then
+                ns.Print("updated professions without the profession window")
+            end
+            ns.Refresh()
+        end
         helloReady = true
         ns.Sync.EnsureHello()
-        ns.Scanner.QuietQueue(0) -- share professions without opening their windows
+        if changed then
+            ns.Sync.Announce()
+        end
     end)
 end
 
@@ -157,6 +299,7 @@ end
 
 function handlers.PLAYER_GUILD_UPDATE()
     noteGuild()
+    noteRosterSelf()
     if ns.GuildTab then ns.GuildTab.Update() end
     if helloReady then
         ns.Sync.EnsureHello() -- joined a guild mid-session
@@ -167,6 +310,7 @@ end
 local rosterPending = false
 function handlers.GUILD_ROSTER_UPDATE()
     noteGuild()
+    noteRosterSelf()
     if helloReady then
         ns.Sync.EnsureHello()
     end
