@@ -524,7 +524,8 @@ UnitFactionGroup = function() return "Alliance" end
 win.rows[1].scripts.OnClick(win.rows[1])
 rows = visibleRows()
 assert(not rows[1].collapsed and rows[2].total == 0 and rows[2].skill <= rows[3].skill, "expanded, lowest skill first")
-assert(win.rows[2].count.text == "Skill " .. rows[2].skill, "skill instead of crafters")
+assert(win.rows[1].count.text == "", "group headers don't clutter the skill column")
+assert(win.rows[2].count.text == tostring(rows[2].skill), "bare skill number under Skill column")
 win.rows[2].scripts.OnClick(win.rows[2])
 assert(win.nobody.shown, "nobody knows it")
 assert(win.sourceText.text ~= "", "where to learn it")
@@ -654,6 +655,43 @@ win.crafters[1].pick.scripts.OnClick(win.crafters[1].pick)
 assert(win.member.text.text == "Dan", "crafter name filters")
 win.member.scripts.OnClick(win.member)
 win.memberMenu.rows[1].scripts.OnClick(win.memberMenu.rows[1])
+
+-- Sort dropdown: sort by skill high-to-low, crafters, then back to name.
+assert(win.sort and win.sort.text.text == "Sort: Name", "default sort button label")
+win.sort.scripts.OnClick(win.sort)
+assert(win.sortMenu.shown and not win.memberMenu.shown, "sort menu opens")
+local function pickSort(key)
+    win.sort.scripts.OnClick(win.sort)
+    for _, row in ipairs(win.sortMenu.rows) do
+        if row.key == key then
+            row.scripts.OnClick(row)
+            return
+        end
+    end
+    error("missing sort option: " .. key)
+end
+win.sortMenu:Hide()
+pickSort("skill_desc")
+assert(not win.sortMenu.shown and win.sort.text.text == "Sort: Skill high-low", "sort label updates")
+assert(MarketplaceDB.settings.sort == "skill_desc", "sort choice saved")
+assert(win.rows[2].count.text == tostring(visibleRows()[2].skill), "skill number shown on known rows")
+-- Expanding Alchemy (unlearned) under skill_desc lists highest skill first.
+for _, tab in ipairs(win.tabs) do if tab.title == "Alchemy" then tab.scripts.OnClick(tab) end end
+win.rows[1].scripts.OnClick(win.rows[1])
+rows = visibleRows()
+assert(rows[2].skill >= rows[3].skill, "unlearned recipes respect skill_desc")
+win.rows[1].scripts.OnClick(win.rows[1])
+for _, tab in ipairs(win.tabs) do if tab.title == "Cooking" then tab.scripts.OnClick(tab) end end
+pickSort("crafters")
+local cookSkill = visibleRows()[2].skill
+assert(win.sort.text.text == "Sort: Crafters" and win.rows[2].count.text == "1 crafter · " .. cookSkill, "crafters sort shows count and skill")
+-- Clicking column headers toggles Skill sort and resets to Recipe (Name).
+win.colSkill.scripts.OnClick(win.colSkill)
+assert(win.sort.text.text == "Sort: Skill low-high", "Skill column header sorts low-high")
+win.colSkill.scripts.OnClick(win.colSkill)
+assert(win.sort.text.text == "Sort: Skill high-low", "clicking Skill header again toggles high-low")
+win.colRecipe.scripts.OnClick(win.colRecipe)
+assert(win.sort.text.text == "Sort: Name" and win.rows[2].count.text == tostring(cookSkill), "Recipe header sorts by name and keeps skill number")
 
 -- Track recipe, through the profession API.
 local tracked = {}

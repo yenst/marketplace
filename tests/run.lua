@@ -514,6 +514,56 @@ test("Data.List favorites", function()
 end)
 
 
+test("Data.List sorts by skill, online crafters and total crafters", function()
+    local on1 = { key = "Ann", name = "Ann", state = "addon" }
+    local on2 = { key = "Bob", name = "Bob", state = "you" }
+    local off1 = { key = "Cal", name = "Cal", state = "offline" }
+    local off2 = { key = "Dan", name = "Dan", state = "offline" }
+    local recipes = {
+        [1] = { id = 1, prof = 164, profName = "Blacksmithing", cat = 10, catName = "Weapons", skill = 200, crafters = { off1, off2 } },
+        [2] = { id = 2, prof = 164, profName = "Blacksmithing", cat = 10, catName = "Weapons", skill = 50, crafters = { on1 } },
+        [3] = { id = 3, prof = 164, profName = "Blacksmithing", cat = 10, catName = "Weapons", skill = 300, crafters = { on1, on2, off1 } },
+        [4] = { id = 4, prof = 164, profName = "Blacksmithing", cat = 10, catName = "Weapons", skill = nil, crafters = { on1, off1 } },
+        [5] = { id = 5, prof = 164, profName = "Blacksmithing", cat = 0, catName = "Other", skill = 10, crafters = {} },
+        [6] = { id = 6, prof = 164, profName = "Blacksmithing", cat = 0, catName = "Other", skill = 250, crafters = {} },
+    }
+    local names = { [1] = "Bronze Axe", [2] = "Copper Dagger", [3] = "Arcanite Blade", [4] = "Custom Sword", [5] = "Low Plan", [6] = "High Plan" }
+    local meta = function(id) return { name = names[id] } end
+    local function weaponOrder(sort)
+        local items = ns.Data.List(recipes, { prof = 164, sort = sort }, meta, function() end)
+        local out = {}
+        for _, item in ipairs(items) do
+            if not item.header and item.total > 0 then
+                out[#out + 1] = item.recipe.id
+            end
+        end
+        return table.concat(out, ",")
+    end
+    eq(weaponOrder("name"), "3,1,2,4", "alphabetical by name")
+    eq(weaponOrder("skill_asc"), "2,1,3,4", "lowest skill first, unknown skill last")
+    eq(weaponOrder("skill_desc"), "3,1,2,4", "highest skill first, unknown skill last")
+    eq(weaponOrder("online"), "3,4,2,1", "most online first, tie by total crafters")
+    eq(weaponOrder("crafters"), "3,4,1,2", "most crafters first, tie by online crafters")
+
+    -- Not in your guild respects explicit skill_desc sort too.
+    local items = ns.Data.List(recipes, { prof = 164, sort = "skill_desc" }, meta, function() end)
+    eq(items[#items - 2].label, ns.Data.NOBODY)
+    eq(items[#items - 1].recipe.id, 6, "highest unlearned skill first")
+    eq(items[#items].recipe.id, 5)
+
+    -- Right-hand row text shows required skill number, plus crafter count when sorting by crafters/online.
+    eq(ns.Data.CrafterText({ total = 2, skill = 200 }, "name"), "200")
+    eq(ns.Data.CrafterText({ total = 2, skill = nil }, "name"), "")
+    eq(ns.Data.CrafterText({ total = 2, skill = 200 }, "skill_asc"), "200")
+    eq(ns.Data.CrafterText({ total = 2, skill = nil }, "skill_desc"), "")
+    eq(ns.Data.CrafterText({ total = 1, skill = 200 }, "crafters"), "1 crafter · 200")
+    eq(ns.Data.CrafterText({ total = 1, skill = nil }, "crafters"), "1 crafter")
+    eq(ns.Data.CrafterText({ total = 3, skill = 200 }, "online"), "3 crafters · 200")
+    eq(ns.Data.CrafterText({ total = 0, skill = 50 }, "crafters"), "50")
+    eq(ns.Data.CrafterText({ total = 0, skill = nil }, "name"), "")
+    assert(ns.Data.SortInfo("skill_desc") and not ns.Data.SortInfo("bogus"))
+end)
+
 test("Data.Index adds catalog recipes nobody has", function()
     local catalog = { [185] = { [7] = { s = 1, src = "t" }, [8] = { s = 50, src = "v" } }, [356] = { [9] = { s = 1 } } }
     local recipes = ns.Data.Index(ns.Data.Crafters(ctx()), catalog, { [185] = "Cooking" })
@@ -524,7 +574,7 @@ test("Data.Index adds catalog recipes nobody has", function()
     eq(recipes[9], nil, "gathering professions are left out")
     local items = ns.Data.List(recipes, { prof = 185 }, metaOf, itemName)
     eq(items[#items - 1].label, ns.Data.NOBODY, "nobody's recipes come last")
-    eq(ns.Data.CrafterText(items[#items]), "Skill 50")
+    eq(ns.Data.CrafterText(items[#items]), "50")
     -- Collapsed "Not in your guild" skips meta lookups while keeping exact count.
     local metaCalls = 0
     local collapsedItems, collapsedCount = ns.Data.List(recipes, { prof = 185, collapsed = { [ns.Data.NOBODY] = true } }, function(id)

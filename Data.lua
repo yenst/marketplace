@@ -358,25 +358,90 @@ local function collectRecipe(id, r, filter, query, metaOf, itemName, acc)
     acc.count = acc.count + 1
 end
 
+Data.SORTS = {
+    { key = "name", label = "Name (A-Z)", buttonLabel = "Sort: Name" },
+    { key = "skill_asc", label = "Skill (low to high)", buttonLabel = "Sort: Skill low-high" },
+    { key = "skill_desc", label = "Skill (high to low)", buttonLabel = "Sort: Skill high-low" },
+    { key = "online", label = "Online first", buttonLabel = "Sort: Online" },
+    { key = "crafters", label = "Most crafters", buttonLabel = "Sort: Crafters" },
+}
+
+local SORT_BY_KEY = {}
+for _, s in ipairs(Data.SORTS) do
+    SORT_BY_KEY[s.key] = s
+end
+
+-- Returns the Data.SORTS entry for key, or nil if unknown.
+function Data.SortInfo(key)
+    return key and SORT_BY_KEY[key] or nil
+end
+
+local SKILL_UNKNOWN_ASC = math.huge
+local SKILL_UNKNOWN_DESC = -1
+
 local function compareByName(a, b)
     return a.name < b.name
 end
 
-local function compareBySkillThenName(a, b)
-    local sa, sb = a.skill or 0, b.skill or 0
+local function compareBySkillAsc(a, b)
+    local sa, sb = a.skill or SKILL_UNKNOWN_ASC, b.skill or SKILL_UNKNOWN_ASC
     if sa ~= sb then
         return sa < sb
     end
     return a.name < b.name
 end
 
+local function compareBySkillDesc(a, b)
+    local sa, sb = a.skill or SKILL_UNKNOWN_DESC, b.skill or SKILL_UNKNOWN_DESC
+    if sa ~= sb then
+        return sa > sb
+    end
+    return a.name < b.name
+end
+
+local function compareByOnline(a, b)
+    if a.online ~= b.online then
+        return a.online > b.online
+    end
+    if a.total ~= b.total then
+        return a.total > b.total
+    end
+    return a.name < b.name
+end
+
+local function compareByCrafters(a, b)
+    if a.total ~= b.total then
+        return a.total > b.total
+    end
+    if a.online ~= b.online then
+        return a.online > b.online
+    end
+    return a.name < b.name
+end
+
+local SORT_COMPARATORS = {
+    name = compareByName,
+    skill_asc = compareBySkillAsc,
+    skill_desc = compareBySkillDesc,
+    online = compareByOnline,
+    crafters = compareByCrafters,
+}
+
+local function rowComparator(groupName, sort)
+    if (not sort or sort == "name") and groupName == Data.NOBODY then
+        return compareBySkillAsc
+    end
+    return SORT_COMPARATORS[sort] or compareByName
+end
+
 -- The recipe list the window draws: headers and rows. Favourite recipes are
 -- grouped under a "Favorites" header at the top instead of their category;
 -- recipes nobody in the guild has go under "Not in your guild" at the
--- bottom, by required skill (in All professions only when searching).
+-- bottom, by required skill by default (in All professions only when searching).
 --   filter = { prof = "all" | profID, query, onlineOnly, collapsed = { [header] = true },
 --              member = crafter key (only that member's patterns) or nil,
---              favorites = { [recipeID] = true } }
+--              favorites = { [recipeID] = true },
+--              sort = "name" | "skill_asc" | "skill_desc" | "online" | "crafters" }
 --   metaOf(recipeID) -> { name, item, reagents } (name may be nil while loading)
 --   itemName(itemID) -> name or nil
 -- Returns items = { { header = true, label, count, collapsed } | { recipe, name, online, total } }
@@ -405,7 +470,7 @@ function Data.List(recipes, filter, metaOf, itemName)
             favorites = key == Data.FAVORITES,
         }
         if not collapsed then
-            table.sort(rows, key == Data.NOBODY and compareBySkillThenName or compareByName)
+            table.sort(rows, rowComparator(key, filter.sort))
             for _, row in ipairs(rows) do
                 items[#items + 1] = row
             end
@@ -469,13 +534,18 @@ function Data.Members(recipes, prof)
     return list
 end
 
--- Right-hand text of a recipe row: "Skill 165" when nobody has it, else
--- nothing (the green dot says someone's online).
-function Data.CrafterText(row)
+-- Right-hand text of a recipe row (under the "Skill" column header): required
+-- skill number when known, plus crafter count when sorting by crafters/online.
+function Data.CrafterText(row, sort)
+    local skillText = row.skill and tostring(row.skill) or nil
     if row.total == 0 then
-        return row.skill and ("Skill " .. row.skill) or "Nobody"
+        return skillText or ""
     end
-    return ""
+    if sort == "crafters" or sort == "online" then
+        local countText = ns.Plural(row.total, "crafter")
+        return skillText and (countText .. " · " .. skillText) or countText
+    end
+    return skillText or ""
 end
 
 -- Status line under a crafter's name (nothing when online: the green dot

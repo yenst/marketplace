@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.11
+
+- Sorting: added a Sort dropdown to the filter bar (Name, Skill low-to-high, Skill high-to-low, Online first, and Most crafters), remembered between sessions.
+- Recipe list: added clickable `Recipe` and `Skill` column headers, moved required skill numbers into the right column (instead of repeating "Skill" or showing recipe counts on every category header), and placed the online green dot in front of recipe names at a consistent indent.
+
 ## 0.1.10
 
 - Fixed characters sharing the same first name on WoW Forever inheriting and syncing each other's professions and skill levels: saved characters are now keyed by `UnitGUID("player")` instead of first name, with verified migration of pre-existing entries.

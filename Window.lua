@@ -13,14 +13,19 @@ ns.Window = Window
 local WIDTH, HEIGHT = 760, 680
 local PAD = 14
 local LIST_TOP = 132
-local ROW_HEIGHT, ROWS = 20, 12
-local LIST_HEIGHT = ROWS * ROW_HEIGHT + 6
+local LIST_HEADER_HEIGHT = 20
+local ROW_HEIGHT, ROWS = 20, 11
+local LIST_HEIGHT = LIST_HEADER_HEIGHT + ROWS * ROW_HEIGHT + 6
 local DETAIL_TOP = LIST_TOP + LIST_HEIGHT + 12
 local CRAFTER_HEIGHT, CRAFTER_ROWS = 30, 4
 local SOURCE_TOP = 18 + CRAFTER_ROWS * CRAFTER_HEIGHT + 10
 local REAGENT_SLOTS, REAGENT_ROW = 8, 38
 local TAB_SIZE, MAX_TABS = 36, 12
 local MEMBER_ROWS = 12
+local SEARCH_WIDTH = 284
+local DROPDOWN_WIDTH = 156
+local SORT_MENU_WIDTH = 168
+local ONLINE_WIDTH = 106
 local STAT_WIDTH = 120
 local AUCTIONATOR_LOGO = "Interface\\AddOns\\Auctionator\\Images\\Logo"
 local STAT_ICONS = {
@@ -30,7 +35,7 @@ local STAT_ICONS = {
 }
 
 local frame
-local state = { prof = "all", query = "", onlineOnly = false, collapsed = { [Data.NOBODY] = true }, selected = nil, offset = 0, crafterOffset = 0 }
+local state = { prof = "all", query = "", onlineOnly = false, sort = "name", collapsed = { [Data.NOBODY] = true }, selected = nil, offset = 0, crafterOffset = 0 }
 local model = { recipes = {}, professions = {}, tabs = {}, crafters = {}, items = {}, rosterSize = 0 }
 
 -- Game data helpers ---------------------------------------------------------
@@ -391,17 +396,48 @@ local function buildHeader()
     line:SetPoint("TOPRIGHT", -PAD, -94)
 end
 
-local function hideMemberMenu()
-    if frame and frame.memberMenu then
+local function hideMenus()
+    if not frame then
+        return
+    end
+    if frame.memberMenu then
         frame.memberMenu:Hide()
+    end
+    if frame.sortMenu then
+        frame.sortMenu:Hide()
     end
 end
 
 -- Sets (or with nil clears) the member filter.
 local function setMember(key)
     state.member, state.offset, state.selected = key, 0, nil
-    hideMemberMenu()
+    hideMenus()
     Window.Refresh()
+end
+
+local function setSort(key)
+    if not Data.SortInfo(key) then
+        return
+    end
+    state.sort, state.offset = key, 0
+    if ns.db and ns.db.settings then
+        ns.db.settings.sort = key
+    end
+    hideMenus()
+    Window.Refresh()
+end
+
+local function dropdownButton(parent, label, width, onClick)
+    local button = W.Button(parent, label, width, 24, onClick)
+    button.text:ClearAllPoints()
+    button.text:SetPoint("LEFT", 10, 0)
+    button.text:SetPoint("RIGHT", -22, 0)
+    button.text:SetJustifyH("LEFT")
+    local arrow = button:CreateTexture(nil, "ARTWORK")
+    arrow:SetSize(14, 14)
+    arrow:SetPoint("RIGHT", -6, 0)
+    arrow:SetTexture("Interface\\Buttons\\Arrow-Down-Up")
+    return button
 end
 
 local function buildMemberMenu()
@@ -447,14 +483,38 @@ local function buildMemberMenu()
         menu.rows[i] = row
     end
     frame.memberMenu = menu
-    frame:HookScript("OnHide", hideMemberMenu)
-    frame:HookScript("OnMouseDown", hideMemberMenu)
+end
+
+local function buildSortMenu()
+    local menu = W.Panel(frame.browse, { 0.04, 0.06, 0.08, 1 })
+    menu:SetSize(SORT_MENU_WIDTH, #Data.SORTS * ROW_HEIGHT + 8)
+    menu:SetFrameStrata("FULLSCREEN_DIALOG")
+    menu:EnableMouse(true)
+    menu:Hide()
+    menu.rows = {}
+    for i, option in ipairs(Data.SORTS) do
+        local row = CreateFrame("Button", nil, menu)
+        row:SetHeight(ROW_HEIGHT)
+        row:SetPoint("TOPLEFT", 4, -4 - (i - 1) * ROW_HEIGHT)
+        row:SetPoint("TOPRIGHT", -4, -4 - (i - 1) * ROW_HEIGHT)
+        row.key = option.key
+        row.hover = hoverTexture(row)
+        row.label = W.Text(row, 12)
+        row.label:SetPoint("LEFT", 8, 0)
+        row.label:SetPoint("RIGHT", -8, 0)
+        row.label:SetText(option.label)
+        row:SetScript("OnEnter", function(self) self.hover:Show() end)
+        row:SetScript("OnLeave", function(self) self.hover:Hide() end)
+        row:SetScript("OnClick", function(self) setSort(self.key) end)
+        menu.rows[i] = row
+    end
+    frame.sortMenu = menu
 end
 
 local function buildFilters()
     -- Redraw once typing pauses: every search scans the whole catalog.
     local searchToken
-    frame.search = W.SearchBox(frame.browse, 360, "Search recipes, reagents or members", function(text)
+    frame.search = W.SearchBox(frame.browse, SEARCH_WIDTH, "Search recipes, reagents or members", function(text)
         state.query, state.offset, state.selected = text, 0, nil
         local token = {}
         searchToken = token
@@ -465,33 +525,36 @@ local function buildFilters()
         end)
     end)
     frame.search:SetPoint("TOPLEFT", PAD, -102)
-    frame.search:HookScript("OnEditFocusGained", hideMemberMenu)
+    frame.search:HookScript("OnEditFocusGained", hideMenus)
 
     -- Member filter: only one guildmate's patterns.
-    frame.member = W.Button(frame.browse, "All members", 170, 24, function()
+    frame.member = dropdownButton(frame.browse, "All members", DROPDOWN_WIDTH, function()
         Window.ToggleMemberMenu()
     end)
-    frame.member:SetPoint("LEFT", frame.search, "RIGHT", 10, 0)
-    frame.member.text:ClearAllPoints()
-    frame.member.text:SetPoint("LEFT", 10, 0)
-    frame.member.text:SetPoint("RIGHT", -22, 0)
-    frame.member.text:SetJustifyH("LEFT")
-    local arrow = frame.member:CreateTexture(nil, "ARTWORK")
-    arrow:SetSize(14, 14)
-    arrow:SetPoint("RIGHT", -6, 0)
-    arrow:SetTexture("Interface\\Buttons\\Arrow-Down-Up")
+    frame.member:SetPoint("LEFT", frame.search, "RIGHT", 8, 0)
     buildMemberMenu()
+
+    -- Sort order for recipes within each group.
+    frame.sort = dropdownButton(frame.browse, "Sort: Name", DROPDOWN_WIDTH, function()
+        Window.ToggleSortMenu()
+    end)
+    frame.sort:SetPoint("LEFT", frame.member, "RIGHT", 8, 0)
+    buildSortMenu()
+
+    frame:HookScript("OnHide", hideMenus)
+    frame:HookScript("OnMouseDown", hideMenus)
+
     local online = W.Toggle(frame.browse, "Online only", function() return state.onlineOnly end, function(v)
         state.onlineOnly, state.offset, state.selected = v, 0, nil
-        hideMemberMenu()
+        hideMenus()
         Window.Refresh()
     end)
-    online:SetWidth(120)
-    online:SetPoint("LEFT", frame.member, "RIGHT", 14, 0)
+    online:SetWidth(ONLINE_WIDTH)
+    online:SetPoint("LEFT", frame.sort, "RIGHT", 14, 0)
 end
 
 local function onListRowClick(self, button)
-    hideMemberMenu()
+    hideMenus()
     local item = self.item
     if not item then
         return
@@ -527,8 +590,8 @@ end
 local function buildListRow(list, index)
     local row = CreateFrame("Button", nil, list)
     row:SetHeight(ROW_HEIGHT)
-    row:SetPoint("TOPLEFT", 3, -3 - (index - 1) * ROW_HEIGHT)
-    row:SetPoint("TOPRIGHT", -12, -3 - (index - 1) * ROW_HEIGHT)
+    row:SetPoint("TOPLEFT", 3, -LIST_HEADER_HEIGHT - 3 - (index - 1) * ROW_HEIGHT)
+    row:SetPoint("TOPRIGHT", -12, -LIST_HEADER_HEIGHT - 3 - (index - 1) * ROW_HEIGHT)
     row.hover = hoverTexture(row)
     -- Category headers sit on a shaded band so groups read at a glance.
     row.band = row:CreateTexture(nil, "BACKGROUND", nil, -1)
@@ -547,10 +610,9 @@ local function buildListRow(list, index)
     row.label:SetPoint("RIGHT", -150, 0)
     row.count = W.Text(row, 11, Theme.muted, "RIGHT")
     row.count:SetPoint("RIGHT", -8, 0)
-    row.count:SetWidth(110)
     row.dot = row:CreateTexture(nil, "ARTWORK")
     row.dot:SetSize(6, 6)
-    row.dot:SetPoint("RIGHT", row.count, "LEFT", -6, 0)
+    row.dot:SetPoint("LEFT", 20, 0)
     row.dot:SetColorTexture(unpack(Theme.online))
     row:SetScript("OnEnter", function(self)
         self.hover:Show()
@@ -570,6 +632,53 @@ local function buildListRow(list, index)
     return row
 end
 
+local function drawListHeader()
+    if not (frame and frame.colRecipe and frame.colSkill) then
+        return
+    end
+    local skillSorted = state.sort == "skill_asc" or state.sort == "skill_desc"
+    frame.colRecipe.label:SetTextColor(unpack(state.sort == "name" and Theme.accent or Theme.muted))
+    frame.colSkill.label:SetTextColor(unpack(skillSorted and Theme.accent or Theme.muted))
+end
+
+local function columnHeaderButton(parent, label, width, justify, onClick)
+    local button = CreateFrame("Button", nil, parent)
+    button:SetWidth(width)
+    button.label = W.Text(button, 11, Theme.muted, justify)
+    button.label:SetAllPoints()
+    button.label:SetText(label)
+    button:SetScript("OnEnter", function(self) self.label:SetTextColor(unpack(Theme.text)) end)
+    button:SetScript("OnLeave", drawListHeader)
+    button:SetScript("OnClick", onClick)
+    return button
+end
+
+local function buildListHeader(list)
+    local header = CreateFrame("Frame", nil, list)
+    header:SetPoint("TOPLEFT", 1, -1)
+    header:SetPoint("TOPRIGHT", -1, -1)
+    header:SetHeight(LIST_HEADER_HEIGHT)
+    local bg = header:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(1, 1, 1, 0.03)
+    local line = W.Line(header)
+    line:SetPoint("BOTTOMLEFT")
+    line:SetPoint("BOTTOMRIGHT")
+
+    frame.colRecipe = columnHeaderButton(header, "Recipe", 120, "LEFT", function()
+        setSort("name")
+    end)
+    frame.colRecipe:SetPoint("TOPLEFT", 24, 0)
+    frame.colRecipe:SetPoint("BOTTOMLEFT", 24, 0)
+
+    -- Aligns with row.count's right edge (row -12 + count -8 = -20 from list, -19 from header).
+    frame.colSkill = columnHeaderButton(header, "Skill", 80, "RIGHT", function()
+        setSort(state.sort == "skill_asc" and "skill_desc" or "skill_asc")
+    end)
+    frame.colSkill:SetPoint("TOPRIGHT", -19, 0)
+    frame.colSkill:SetPoint("BOTTOMRIGHT", -19, 0)
+end
+
 local function buildList()
     local list = W.Panel(frame.browse, { 0.04, 0.06, 0.08, 1 })
     list:SetPoint("TOPLEFT", PAD, -LIST_TOP)
@@ -581,15 +690,16 @@ local function buildList()
         Window.DrawList()
     end)
     frame.list = list
+    buildListHeader(list)
     frame.listScroll = W.ScrollBar(list, function(offset)
         state.offset = offset
         Window.DrawList()
     end)
-    frame.listScroll:SetPoint("TOPRIGHT", -3, -3)
+    frame.listScroll:SetPoint("TOPRIGHT", -3, -(LIST_HEADER_HEIGHT + 3))
     frame.listScroll:SetPoint("BOTTOMRIGHT", -3, 3)
 
     frame.empty = W.Text(list, 12, Theme.muted, "CENTER")
-    frame.empty:SetPoint("CENTER")
+    frame.empty:SetPoint("CENTER", 0, -LIST_HEADER_HEIGHT / 2)
     frame.empty:SetWidth(520)
     frame.empty:SetWordWrap(true)
 
@@ -898,7 +1008,7 @@ local function buildTabs()
     for i = 1, MAX_TABS do
         local tab = W.IconButton(frame.browse, TAB_SIZE, nil, "?", nil, function(self)
             state.prof, state.offset, state.selected = self.prof, 0, nil
-            hideMemberMenu()
+            hideMenus()
             Window.Refresh()
         end)
         tab:SetPoint("TOPLEFT", frame, "TOPRIGHT", -1, -48 - (i - 1) * (TAB_SIZE + 4) - (i > 1 and 6 or 0))
@@ -917,6 +1027,10 @@ local function build()
     if type(pos) == "table" and pos[1] and pos[2] and pos[3] and pos[4] then
         frame:ClearAllPoints()
         frame:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4])
+    end
+    local savedSort = ns.db and ns.db.settings and ns.db.settings.sort
+    if Data.SortInfo(savedSort) then
+        state.sort = savedSort
     end
     frame.subtitle:Hide()
     frame.browse = CreateFrame("Frame", nil, frame)
@@ -990,7 +1104,7 @@ local function drawHeaderRow(row, item)
     row.label:SetText(item.label)
     row.label:SetTextColor(unpack(Theme.text))
     row.label:SetAlpha(1)
-    row.count:SetText(ns.Plural(item.count, "recipe"))
+    row.count:SetText("")
     row.dot:Hide()
     row.selectedBg:Hide()
 end
@@ -1004,15 +1118,8 @@ local function drawRecipeRow(row, item)
     row.label:SetPoint("LEFT", 34, 0)
     row.label:SetText(Theme.QualityHex(quality or 1) .. item.name .. "|r")
     row.label:SetAlpha(item.total == 0 and 0.6 or 1)
-    local text = Data.CrafterText(item)
-    row.count:SetText(text)
+    row.count:SetText(Data.CrafterText(item, state.sort))
     row.dot:SetShown(item.online > 0)
-    row.dot:ClearAllPoints()
-    if text == "" then
-        row.dot:SetPoint("RIGHT", -10, 0)
-    else
-        row.dot:SetPoint("RIGHT", row.count, "LEFT", -6, 0)
-    end
     row.selectedBg:SetShown(item.recipe.id == state.selected)
 end
 
@@ -1053,6 +1160,7 @@ function Window.DrawList()
     if frame.listScroll then
         frame.listScroll:Update(state.offset, ROWS, #items)
     end
+    drawListHeader()
     frame.empty:SetText(emptyListMessage())
 end
 
@@ -1353,11 +1461,37 @@ function Window.ToggleMemberMenu()
         menu:Hide()
         return
     end
+    hideMenus()
     menu:ClearAllPoints()
     menu:SetPoint("TOPLEFT", frame.member, "BOTTOMLEFT", 0, -2)
     menu.offset = 0
     menu:Show()
     Window.DrawMemberMenu()
+end
+
+function Window.DrawSortMenu()
+    local menu = frame.sortMenu
+    if not menu or not menu:IsShown() then
+        return
+    end
+    for _, row in ipairs(menu.rows) do
+        local selected = row.key == state.sort
+        row.label:SetTextColor(unpack(selected and Theme.accent or Theme.text))
+        row.label:SetAlpha(selected and 1 or 0.85)
+    end
+end
+
+function Window.ToggleSortMenu()
+    local menu = frame.sortMenu
+    if menu:IsShown() then
+        menu:Hide()
+        return
+    end
+    hideMenus()
+    menu:ClearAllPoints()
+    menu:SetPoint("TOPLEFT", frame.sort, "BOTTOMLEFT", 0, -2)
+    menu:Show()
+    Window.DrawSortMenu()
 end
 
 local function drawFooter()
@@ -1413,6 +1547,8 @@ function Window.Refresh()
         end
     end
     frame.member:SetLabel(state.memberName or (state.member or "All members"))
+    local sortInfo = Data.SortInfo(state.sort) or Data.SORTS[1]
+    frame.sort:SetLabel(sortInfo.buttonLabel)
     model.items, model.count = Data.List(model.recipes, state, function(id) return ns.Scanner.Meta(id) end, itemName)
     ensureSelection()
     drawHeader()
@@ -1421,6 +1557,7 @@ function Window.Refresh()
     drawFooter()
     Window.DrawSync()
     Window.DrawMemberMenu()
+    Window.DrawSortMenu()
 end
 
 -- Tracking changed elsewhere (the profession window, the tracker).
